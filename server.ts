@@ -4,7 +4,15 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
-import { getDatabasePool, testDatabaseConnection, getDatabaseStats, closeDatabaseConnections } from './src/database';
+import { 
+  getDatabasePool, 
+  testDatabaseConnection, 
+  getDatabaseStats, 
+  closeDatabaseConnections,
+  initializeDatabaseTables,
+  syncBatchData,
+  getTableCounts
+} from './src/database';
 
 dotenv.config();
 
@@ -17,7 +25,7 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // ============================================
-  // DATABASE INITIALIZATION
+  // DATABASE INITIALIZATION & TABLE CREATION
   // ============================================
   let dbHealthy = false;
   
@@ -25,11 +33,16 @@ async function startServer() {
     // Test database connection on startup
     const dbConnected = await testDatabaseConnection();
     dbHealthy = dbConnected;
-    if (!dbConnected) {
+    
+    if (dbConnected) {
+      // Initialize all tables automatically
+      await initializeDatabaseTables();
+      console.log('✅ Database tables initialized and ready');
+    } else {
       console.warn('⚠️  Database connection failed. Some features may be unavailable.');
     }
   } catch (dbError: any) {
-    console.warn('⚠️  Database initialization skipped (optional). Error:', dbError.message);
+    console.warn('⚠️  Database initialization error:', dbError.message);
     dbHealthy = false;
   }
 
@@ -39,41 +52,14 @@ async function startServer() {
   app.get('/api/health', async (req, res) => {
     const dbStats = await getDatabaseStats();
     res.json({
-      status: 'ok',
+      success: true,
+      status: dbStats.connected ? 'connected' : 'disconnected',
       service: 'Elthera Pro API',
       timestamp: new Date().toISOString(),
       database: dbStats,
+      banco_instalado: dbHealthy,
+      usando_mysql_real: dbStats.usando_mysql_real,
     });
-  });
-
-  // ============================================
-  // DATABASE ENDPOINTS (Example)
-  // ============================================
-  // Example endpoint to fetch data from database (if enabled)
-  app.get('/api/database-test', async (req, res) => {
-    if (!dbHealthy) {
-      return res.status(503).json({
-        success: false,
-        message: 'Database is not available',
-      });
-    }
-
-    try {
-      const pool = getDatabasePool();
-      // Test query - adjust based on your schema
-      const [rows]: any = await pool.query('SELECT 1 as test, NOW() as server_time');
-      
-      return res.json({
-        success: true,
-        message: 'Database connection successful',
-        data: rows[0],
-      });
-    } catch (error: any) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database query failed: ' + error.message,
-      });
-    }
   });
 
   // ============================================
@@ -88,30 +74,75 @@ async function startServer() {
   // ============================================
   // IMAGE UPLOAD HANDLER
   // ============================================
-  const handleImageUpload = (req: express.Request, res: express.Response) => {
-    const payload = req.body || {};
-    const base64 = payload.imagem_base64 || payload.dataUrl || '';
-    const guid = payload.guid || payload.id || `img_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const originalName = payload.nome_original || `${guid}.jpg`;
-    
-    let ext = 'jpg';
-    let cleanBase64 = base64;
-    const match = base64.match(/^data:image\/(\w+);base64,/);
-    if (match) {
-      ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-      cleanBase64 = base64.replace(/^data:image\/\w+;base64,/, '');
-    }
-
-    const uniqueFilename = `${guid}.${ext}`;
-    const filePath = path.join(uploadsDir, uniqueFilename);
-
+  const handleImageUpload = async (req: express.Request, res: express.Response) => {
     try {
+      const payload = req.body || {};
+      const base64 = payload.imagem_base64 || payload.dataUrl || '';
+      const guid = payload.guid || payload.id || `img_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const originalName = payload.nome_original || `${guid}.jpg`;
+      const usuarioId = payload.usuario_id || 1;
+      
+      let ext = 'jpg';
+      let cleanBase64 = base64;
+      const match = base64.match(/^data:image\/(\w+);base64,/);
+      if (match) {
+        ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+        cleanBase64 = base64.replace(/^data:image\/\w+;base64,/, '');
+      }
+
+      const uniqueFilename = `${guid}.${ext}`;
+      const filePath = path.join(uploadsDir, uniqueFilename);
+
       if (cleanBase64) {
         fs.writeFileSync(filePath, Buffer.from(cleanBase64, 'base64'));
       }
+
+      // ===== NOVO: Insere no banco de dados =====
+      if (dbHealthy) {
+        try {
+          const pool = getDatabasePool();
+          const connection = await pool.getConnection();
+          
+          const size = cleanBase64 ? Buffer.from(cleanBase64, 'base64').length : 0;
+          const mime = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+          const publicUrl = `/uploads/${uniqueFilename}`;
+
+          await connection.query(
+            `INSERT INTO imagens_arquivos (guid, nome_original, nome_arquivo, caminho_servidor, url_publica, tipo_mime, tamanho_bytes, usuario_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE nome_arquivo = VALUES(nome_arquivo), url_publica = VALUES(url_publica)`,
+            [guid, originalName, uniqueFilename, filePath, publicUrl, mime, size, usuarioId]
+          );
+
+          // Validação pós-inserção
+          const [verifyResult]: any = await connection.query(
+            'SELECT id FROM imagens_arquivos WHERE guid = ? LIMIT 1',
+            [guid]
+          );
+
+          connection.release();
+
+          if (verifyResult && verifyResult.length > 0) {
+            return res.json({
+              success: true,
+              message: 'Imagem salva e registrada no banco de dados.',
+              imageId: guid,
+              filename: uniqueFilename,
+              url: publicUrl,
+              size,
+              database_confirmed: true,
+              db_id: verifyResult[0].id,
+              banco_tipo: 'MySQL Real'
+            });
+          }
+        } catch (dbErr: any) {
+          console.error('Erro ao registrar imagem no BD:', dbErr.message);
+        }
+      }
+
       return res.json({
         success: true,
-        message: 'Imagem salva com ID único no servidor.',
+        message: 'Imagem salva no servidor.',
         imageId: guid,
         filename: uniqueFilename,
         url: `/uploads/${uniqueFilename}`,
@@ -125,60 +156,123 @@ async function startServer() {
   app.post(['/api/upload-image', '/api/upload', '/start/api/upload_image'], handleImageUpload);
 
   // ============================================
-  // OFFLINE-FIRST PHP & SYNC MOCK
+  // SINCRONIZAÇÃO DE DADOS - ENDPOINTS PRINCIPAIS
   // ============================================
-  const handlePhpEndpoints = (req: express.Request, res: express.Response) => {
-    if (req.method === 'GET') {
+  
+  // GET - Retorna estatísticas e status
+  app.get(['/api/sync', '/start/api/api.php', '/start/api/sync.php', '/api/api.php', '/api.php'], async (req, res) => {
+    try {
+      if (!dbHealthy) {
+        return res.status(503).json({
+          success: false,
+          message: 'Database is not available',
+          banco_tipo: 'SQLite Fallback (Offline)',
+          usando_mysql_real: false
+        });
+      }
+
+      const stats = await getTableCounts();
+      const dbStats = await getDatabaseStats();
+
       return res.json({
         success: true,
-        banco_instalado: dbHealthy,
-        driver: dbHealthy ? 'MySQL (GoDaddy Node.js Hosting)' : 'Node Express Proxy (Dev/Preview)',
-        estatisticas: {
-          total_checklists: 24,
-          total_cadastros: 18,
-          total_agendamentos: 12,
-          total_financeiro: 24,
-          total_auditoria: 45,
-          total_imagens: 60,
-        },
-        registros: [],
+        banco_instalado: true,
+        driver: 'MySQL',
+        usando_mysql_real: true,
+        estatisticas: stats,
+        database: dbStats,
+        servidor_timestamp: new Date().toISOString()
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: 'Erro ao consultar estatísticas: ' + error.message
+      });
+    }
+  });
+
+  // POST - Sincroniza dados em lote
+  app.post(['/api/sync', '/start/api/api.php', '/start/api/sync.php', '/api/api.php', '/api.php'], async (req, res) => {
+    try {
+      const payload = req.body || {};
+
+      // ===== Tratamento de upload de imagem via POST =====
+      if (payload.action === 'upload_image') {
+        return handleImageUpload(req, res);
+      }
+
+      // ===== Sincronização de dados em lote =====
+      if (!dbHealthy) {
+        return res.status(503).json({
+          success: false,
+          message: 'Database is not available for sync',
+          banco_tipo: 'SQLite Fallback (Offline)',
+          usando_mysql_real: false
+        });
+      }
+
+      const items = payload.lote || payload.itens || payload.queue || payload.items || [];
+      const usuarioId = payload.usuario_id || payload.userId || 1;
+
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Nenhum item para sincronizar. Use: lote, itens, queue ou items'
+        });
+      }
+
+      // Executa sincronização com validação
+      const result = await syncBatchData(items, usuarioId);
+
+      return res.json({
+        success: result.success,
+        message: `${result.itemsProcessed} itens sincronizados com sucesso.`,
+        total_processados: result.itemsProcessed,
+        itemsProcessed: result.itemsProcessed,
+        mapeamento: result.mapeamento,
+        banco_tipo: result.banco_tipo,
+        usando_mysql_real: true,
+        servidor_timestamp: result.servidor_timestamp
+      });
+
+    } catch (error: any) {
+      console.error('❌ Erro na sincronização:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Erro ao sincronizar dados: ' + error.message
+      });
+    }
+  });
+
+  // ============================================
+  // DATABASE TEST ENDPOINT
+  // ============================================
+  app.get('/api/database-test', async (req, res) => {
+    if (!dbHealthy) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database is not available',
       });
     }
 
-    const payload = req.body || {};
-
-    if (payload.action === 'upload_image' || req.query.action === 'upload_image') {
-      return handleImageUpload(req, res);
+    try {
+      const pool = getDatabasePool();
+      const connection = await pool.getConnection();
+      const [rows]: any = await connection.query('SELECT 1 as test, NOW() as server_time');
+      connection.release();
+      
+      return res.json({
+        success: true,
+        message: 'Database connection successful',
+        data: rows[0],
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: 'Database query failed: ' + error.message,
+      });
     }
-
-    const items = payload.lote || payload.itens || payload.queue || payload.items || [];
-    let counter = 100;
-    const mapeamento = items.map((item: any) => ({
-      guid: item.guid || item.id,
-      id_banco: ++counter,
-      status: 'inserido',
-    }));
-
-    return res.json({
-      success: true,
-      message: 'Lote de dados (Checklists, Cadastros, Agenda, Financeiro e Auditoria) processado com sucesso.',
-      total_processados: mapeamento.length,
-      itemsProcessed: mapeamento.length,
-      mapeamento,
-      servidor_timestamp: new Date().toISOString(),
-    });
-  };
-
-  app.all([
-    '/start/api/api.php',
-    '/start/api/sync.php',
-    '/app/api/sync.php',
-    '/app/api/api.php',
-    '/api/sync.php',
-    '/api/api.php',
-    '/api.php',
-    '/sync.php'
-  ], handlePhpEndpoints);
+  });
 
   // ============================================
   // GEMINI AI SOLAR ASSESSMENT
@@ -287,9 +381,12 @@ Retorne APENAS o JSON válido sem markdown adicional.`;
   // SERVER START
   // ============================================
   const server = app.listen(PORT, HOST, () => {
-    console.log(`⚡ Elthera Pro Server running on http://${HOST}:${PORT}`);
-    console.log(`🚀 Node.js Environment: ${process.env.NODE_ENV || 'production'}`);
-    console.log(`📊 Database: ${dbHealthy ? '✅ Connected' : '⚠️  Offline/Optional'}`);
+    console.log(`\n🚀 Elthera Pro Server running on http://${HOST}:${PORT}`);
+    console.log(`📦 Node.js Environment: ${process.env.NODE_ENV || 'production'}`);
+    console.log(`📊 Database: ${dbHealthy ? '✅ MySQL Real Connected' : '⚠️  Offline Mode'}`);
+    console.log('\n✅ Ready for API requests:');
+    console.log(`   GET  http://${HOST}:${PORT}/api/health`);
+    console.log(`   POST http://${HOST}:${PORT}/api/sync (sincronização de dados)\n`);
   });
 
   // ============================================

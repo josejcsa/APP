@@ -15,11 +15,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
-// Configurações do MySQL (HomeHost / cPanel / Localhost)
+// Configurações do MySQL (HomeHost / cPanel / Localhost / GoDaddy Node.js Hosting)
+// O GoDaddy injeta automaticamente as variáveis DB_HOST, DB_PORT, DB_NAME, DB_USER e DB_PASSWORD
 $db_host    = getenv('DB_HOST') ?: 'localhost';
+$db_port    = getenv('DB_PORT') ?: 3306;
 $db_name    = getenv('DB_NAME') ?: 'elthera_db';
 $db_usuario = getenv('DB_USER') ?: 'elthera_user';
-$db_senha   = getenv('DB_PASS') ?: 'elthera_senha_segura_2026';
+// Compatibilidade: aceita DB_PASSWORD (recomendado) ou DB_PASS (antigo)
+$db_senha   = getenv('DB_PASSWORD') ?: getenv('DB_PASS') ?: 'elthera_senha_segura_2026';
 
 // Diretório de Uploads de Imagens (com ID único)
 $uploadDir = __DIR__ . '/uploads';
@@ -27,9 +30,9 @@ if (!file_exists($uploadDir)) {
     @mkdir($uploadDir, 0755, true);
 }
 
-function conectarBanco($host, $dbname, $usuario, $senha) {
+function conectarBanco($host, $port, $dbname, $usuario, $senha) {
     try {
-        $dsn = "mysql:host={$host};dbname={$dbname};charset=utf8mb4";
+        $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
         $options = [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -37,6 +40,7 @@ function conectarBanco($host, $dbname, $usuario, $senha) {
         ];
         $pdo = new PDO($dsn, $usuario, $senha, $options);
     } catch (Exception $e) {
+        // Fallback local (SQLite) para permitir funcionamento offline em ambiente sem MySQL
         $sqlitePath = __DIR__ . '/elthera_local.sqlite';
         $pdo = new PDO("sqlite:" . $sqlitePath);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -275,7 +279,7 @@ function verificarECriarTabelas($pdo) {
 }
 
 try {
-    $pdo = conectarBanco($db_host, $db_name, $db_usuario, $db_senha);
+    $pdo = conectarBanco($db_host, $db_port, $db_name, $db_usuario, $db_senha);
     $metodo = $_SERVER['REQUEST_METHOD'];
 
     // Tratamento de Imagens Servidas / Visualizadas
@@ -321,10 +325,10 @@ try {
                 $publicUrl = 'api.php?view_image=' . urlencode($uniqueFilename);
 
                 // Salva no banco de dados
-                $stmt = $pdo->prepare("
+                $stmt = $pdo->prepare(""
                     INSERT INTO imagens_arquivos (guid, nome_original, nome_arquivo, caminho_servidor, url_publica, tipo_mime, tamanho_bytes, usuario_id)
                     VALUES (:guid, :original, :arquivo, :caminho, :url, :mime, :tamanho, :usuario)
-                ");
+                """);
                 $stmt->execute([
                     ':guid' => $guid,
                     ':original' => $originalName,
@@ -381,10 +385,10 @@ try {
                 $mime = 'image/' . ($ext === 'jpg' ? 'jpeg' : $ext);
                 $publicUrl = 'api.php?view_image=' . urlencode($uniqueFilename);
 
-                $stmt = $pdo->prepare("
+                $stmt = $pdo->prepare(""
                     INSERT INTO imagens_arquivos (guid, nome_original, nome_arquivo, caminho_servidor, url_publica, tipo_mime, tamanho_bytes, usuario_id)
                     VALUES (:guid, :original, :arquivo, :caminho, :url, :mime, :tamanho, :usuario)
-                ");
+                """);
                 $stmt->execute([
                     ':guid' => $guid,
                     ':original' => $originalName,
@@ -456,11 +460,11 @@ try {
 
             if ($registroExistente) {
                 $idBanco = (int)$registroExistente['id'];
-                $updateStmt = $pdo->prepare("
+                $updateStmt = $pdo->prepare(""
                     UPDATE registros_sincronizacao 
                     SET dados_json = :dados_json, tipo_entidade = :tipo, usuario_id = :usuario_id, atualizado_em = CURRENT_TIMESTAMP
                     WHERE id = :id
-                ");
+                """);
                 $updateStmt->execute([
                     ':dados_json' => $dados_json,
                     ':tipo' => $tipo_entidade,
@@ -470,10 +474,10 @@ try {
 
                 $mapeamento[] = ['guid' => $guid, 'id_banco' => $idBanco, 'tipo' => $tipo_entidade, 'status' => 'atualizado'];
             } else {
-                $insertStmt = $pdo->prepare("
+                $insertStmt = $pdo->prepare(""
                     INSERT INTO registros_sincronizacao (guid, tipo_entidade, usuario_id, dados_json, atualizado_em)
                     VALUES (:guid, :tipo, :usuario_id, :dados_json, CURRENT_TIMESTAMP)
-                ");
+                """);
                 $insertStmt->execute([
                     ':guid' => $guid,
                     ':tipo' => $tipo_entidade,
@@ -489,11 +493,11 @@ try {
             $d = is_array($dados) ? $dados : json_decode($dados_json, true);
 
             if ($tipo_entidade === 'checklist' && is_array($d)) {
-                $chkStmt = $pdo->prepare("
+                $chkStmt = $pdo->prepare(""
                     INSERT INTO checklists_laudos (guid, protocol_number, customer_id, technician_id, status, service_value, dados_json)
                     VALUES (:guid, :proto, :cust, :tech, :stat, :val, :dados)
                     ON DUPLICATE KEY UPDATE protocol_number = :proto, customer_id = :cust, technician_id = :tech, status = :stat, service_value = :val, dados_json = :dados
-                ");
+                """);
                 try {
                     $chkStmt->execute([
                         ':guid' => $guid,
@@ -521,11 +525,11 @@ try {
                 }
             } elseif ($tipo_entidade === 'contact' && is_array($d)) {
                 $tipoContato = !empty($d['isTechnician']) ? 'tecnico' : 'cliente';
-                $conStmt = $pdo->prepare("
+                $conStmt = $pdo->prepare(""
                     INSERT INTO cadastros_contatos (guid, tipo, nome, documento, telefone, email, cidade, uf, dados_json)
                     VALUES (:guid, :tipo, :nome, :doc, :tel, :email, :cidade, :uf, :dados)
                     ON DUPLICATE KEY UPDATE tipo = :tipo, nome = :nome, documento = :doc, telefone = :tel, email = :email, cidade = :cidade, uf = :uf, dados_json = :dados
-                ");
+                """);
                 try {
                     $conStmt->execute([
                         ':guid' => $guid,
@@ -555,11 +559,11 @@ try {
                     ]);
                 }
             } elseif ($tipo_entidade === 'appointment' && is_array($d)) {
-                $aptStmt = $pdo->prepare("
+                $aptStmt = $pdo->prepare(""
                     INSERT INTO agendamentos_ordens (guid, customer_id, technician_id, data_agendamento, hora_agendamento, status, valor_total, dados_json)
                     VALUES (:guid, :cust, :tech, :data, :hora, :stat, :val, :dados)
                     ON DUPLICATE KEY UPDATE customer_id = :cust, technician_id = :tech, data_agendamento = :data, hora_agendamento = :hora, status = :stat, valor_total = :val, dados_json = :dados
-                ");
+                """);
                 try {
                     $aptStmt->execute([
                         ':guid' => $guid,
@@ -587,11 +591,11 @@ try {
                     ]);
                 }
             } elseif ($tipo_entidade === 'financial' && is_array($d)) {
-                $finStmt = $pdo->prepare("
+                $finStmt = $pdo->prepare(""
                     INSERT INTO financeiro_lancamentos (guid, customer_id, technician_id, checklist_id, mes_referencia, valor_bruto, valor_liquido, comissao_tecnico, status_pagamento, dados_json)
                     VALUES (:guid, :cust, :tech, :chk, :mes, :vbruto, :vliq, :comissao, :stat, :dados)
                     ON DUPLICATE KEY UPDATE customer_id = :cust, technician_id = :tech, checklist_id = :chk, mes_referencia = :mes, valor_bruto = :vbruto, valor_liquido = :vliq, comissao_tecnico = :comissao, status_pagamento = :stat, dados_json = :dados
-                ");
+                """);
                 try {
                     $finStmt->execute([
                         ':guid' => $guid,
@@ -623,10 +627,10 @@ try {
                     ]);
                 }
             } elseif ($tipo_entidade === 'audit_log' && is_array($d)) {
-                $audStmt = $pdo->prepare("
+                $audStmt = $pdo->prepare(""
                     INSERT INTO auditoria_historico (guid, entity_type, entity_id, acao, usuario, resumo, dados_json)
                     VALUES (:guid, :ent_type, :ent_id, :acao, :usuario, :resumo, :dados)
-                ");
+                """);
                 $audStmt->execute([
                     ':guid' => $guid,
                     ':ent_type' => $d['entityType'] ?? 'geral',

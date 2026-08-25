@@ -4,6 +4,7 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import { getDatabasePool, testDatabaseConnection, getDatabaseStats, closeDatabaseConnections } from './src/database';
 
 dotenv.config();
 
@@ -15,23 +16,78 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-  // Healthcheck
-  app.get('/api/health', (req, res) => {
+  // ============================================
+  // DATABASE INITIALIZATION
+  // ============================================
+  let dbHealthy = false;
+  
+  try {
+    // Test database connection on startup
+    const dbConnected = await testDatabaseConnection();
+    dbHealthy = dbConnected;
+    if (!dbConnected) {
+      console.warn('⚠️  Database connection failed. Some features may be unavailable.');
+    }
+  } catch (dbError: any) {
+    console.warn('⚠️  Database initialization skipped (optional). Error:', dbError.message);
+    dbHealthy = false;
+  }
+
+  // ============================================
+  // HEALTH CHECK ENDPOINT
+  // ============================================
+  app.get('/api/health', async (req, res) => {
+    const dbStats = await getDatabaseStats();
     res.json({
       status: 'ok',
       service: 'Elthera Pro API',
       timestamp: new Date().toISOString(),
+      database: dbStats,
     });
   });
 
-  // Static uploads directory
+  // ============================================
+  // DATABASE ENDPOINTS (Example)
+  // ============================================
+  // Example endpoint to fetch data from database (if enabled)
+  app.get('/api/database-test', async (req, res) => {
+    if (!dbHealthy) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database is not available',
+      });
+    }
+
+    try {
+      const pool = getDatabasePool();
+      // Test query - adjust based on your schema
+      const [rows]: any = await pool.query('SELECT 1 as test, NOW() as server_time');
+      
+      return res.json({
+        success: true,
+        message: 'Database connection successful',
+        data: rows[0],
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: 'Database query failed: ' + error.message,
+      });
+    }
+  });
+
+  // ============================================
+  // STATIC UPLOADS DIRECTORY
+  // ============================================
   const uploadsDir = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
   app.use('/uploads', express.static(uploadsDir));
 
-  // Image upload handler
+  // ============================================
+  // IMAGE UPLOAD HANDLER
+  // ============================================
   const handleImageUpload = (req: express.Request, res: express.Response) => {
     const payload = req.body || {};
     const base64 = payload.imagem_base64 || payload.dataUrl || '';
@@ -68,13 +124,15 @@ async function startServer() {
 
   app.post(['/api/upload-image', '/api/upload', '/start/api/upload_image'], handleImageUpload);
 
-  // Offline-First PHP & Sync Mock / Bridge for development and preview environment
+  // ============================================
+  // OFFLINE-FIRST PHP & SYNC MOCK
+  // ============================================
   const handlePhpEndpoints = (req: express.Request, res: express.Response) => {
     if (req.method === 'GET') {
       return res.json({
         success: true,
-        banco_instalado: true,
-        driver: 'Node Express Proxy (Dev/Preview)',
+        banco_instalado: dbHealthy,
+        driver: dbHealthy ? 'MySQL (GoDaddy Node.js Hosting)' : 'Node Express Proxy (Dev/Preview)',
         estatisticas: {
           total_checklists: 24,
           total_cadastros: 18,
@@ -122,7 +180,9 @@ async function startServer() {
     '/sync.php'
   ], handlePhpEndpoints);
 
-  // Gemini AI Solar Diagnostic & Gain Estimation Advisor
+  // ============================================
+  // GEMINI AI SOLAR ASSESSMENT
+  // ============================================
   app.post('/api/ai/solar-assessment', async (req, res) => {
     try {
       const { powerKwp, moduleCount, dirtLevel, dirtTypes, kwBefore, kwAfter, roofType } = req.body;
@@ -185,7 +245,9 @@ Retorne APENAS o JSON válido sem markdown adicional.`;
     }
   });
 
-  // Vite middleware for development vs static build in production
+  // ============================================
+  // VITE MIDDLEWARE / STATIC FILES
+  // ============================================
   const isDev = process.env.NODE_ENV !== 'production' && fs.existsSync(path.join(process.cwd(), 'src', 'App.tsx')) && !fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'));
 
   if (isDev) {
@@ -221,23 +283,32 @@ Retorne APENAS o JSON válido sem markdown adicional.`;
     });
   }
 
-  // Start server and bind to host & port assigned by GoDaddy Node.js Hosting
+  // ============================================
+  // SERVER START
+  // ============================================
   const server = app.listen(PORT, HOST, () => {
     console.log(`⚡ Elthera Pro Server running on http://${HOST}:${PORT}`);
     console.log(`🚀 Node.js Environment: ${process.env.NODE_ENV || 'production'}`);
+    console.log(`📊 Database: ${dbHealthy ? '✅ Connected' : '⚠️  Offline/Optional'}`);
   });
 
-  // Graceful shutdown handling for GoDaddy Node.js Hosting container lifecycle
-  const handleGracefulShutdown = (signal: string) => {
-    console.log(`Received ${signal}. Gracefully closing Elthera Pro server...`);
-    server.close(() => {
-      console.log('HTTP server closed successfully.');
+  // ============================================
+  // GRACEFUL SHUTDOWN
+  // ============================================
+  const handleGracefulShutdown = async (signal: string) => {
+    console.log(`\n${signal} received. Gracefully shutting down Elthera Pro server...`);
+    
+    server.close(async () => {
+      // Close database connections
+      await closeDatabaseConnections();
+      
+      console.log('✅ HTTP server closed successfully.');
       process.exit(0);
     });
 
     // Force close after 10s if connections linger
     setTimeout(() => {
-      console.error('Forcing shutdown after timeout.');
+      console.error('❌ Forcing shutdown after timeout.');
       process.exit(1);
     }, 10000);
   };
@@ -246,7 +317,9 @@ Retorne APENAS o JSON válido sem markdown adicional.`;
   process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
 }
 
-// Auto-start application server
+// ============================================
+// AUTO-START APPLICATION SERVER
+// ============================================
 startServer().catch((err) => {
   console.error('Failed to start server:', err);
   process.exit(1);

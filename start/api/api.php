@@ -30,7 +30,12 @@ if (!file_exists($uploadDir)) {
     @mkdir($uploadDir, 0755, true);
 }
 
+// Flag para rastrear se estamos usando MySQL real ou SQLite fallback
+$usando_mysql_real = false;
+
 function conectarBanco($host, $port, $dbname, $usuario, $senha) {
+    global $usando_mysql_real;
+    
     try {
         $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
         $options = [
@@ -39,8 +44,10 @@ function conectarBanco($host, $port, $dbname, $usuario, $senha) {
             PDO::ATTR_EMULATE_PREPARES => false,
         ];
         $pdo = new PDO($dsn, $usuario, $senha, $options);
+        $usando_mysql_real = true;
     } catch (Exception $e) {
         // Fallback local (SQLite) para permitir funcionamento offline em ambiente sem MySQL
+        $usando_mysql_real = false;
         $sqlitePath = __DIR__ . '/elthera_local.sqlite';
         $pdo = new PDO("sqlite:" . $sqlitePath);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -278,9 +285,65 @@ function verificarECriarTabelas($pdo) {
     }
 }
 
+// ===== NOVO: HEALTH CHECK ENDPOINT =====
+// Verifica se o banco está conectado e respondendo corretamente
+function handleHealthCheck($pdo) {
+    global $usando_mysql_real;
+    
+    header("Content-Type: application/json; charset=UTF-8");
+    
+    try {
+        $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        
+        if ($driver === 'mysql') {
+            // Testa conexão real com MySQL
+            $result = $pdo->query("SELECT 1")->fetch();
+            if (!$result) {
+                throw new Exception("MySQL respondeu mas sem resultado válido");
+            }
+            
+            echo json_encode([
+                'success' => true,
+                'status' => 'connected',
+                'driver' => 'MySQL',
+                'usando_mysql_real' => true,
+                'host' => getenv('DB_HOST') ?: 'localhost',
+                'database' => getenv('DB_NAME') ?: 'elthera_db',
+                'timestamp' => date('Y-m-d H:i:s'),
+                'message' => 'Conexão MySQL ativa e sincronização pronta'
+            ]);
+        } else {
+            // SQLite fallback
+            echo json_encode([
+                'success' => true,
+                'status' => 'fallback',
+                'driver' => 'SQLite',
+                'usando_mysql_real' => false,
+                'database' => __DIR__ . '/elthera_local.sqlite',
+                'timestamp' => date('Y-m-d H:i:s'),
+                'message' => 'Usando SQLite offline. MySQL não está disponível. Configure DB_HOST, DB_USER e DB_PASSWORD.'
+            ]);
+        }
+    } catch (Exception $e) {
+        http_response_code(503);
+        echo json_encode([
+            'success' => false,
+            'status' => 'error',
+            'message' => 'Banco de dados indisponível: ' . $e->getMessage(),
+            'timestamp' => date('Y-m-d H:i:s')
+        ]);
+    }
+    exit;
+}
+
 try {
     $pdo = conectarBanco($db_host, $db_port, $db_name, $db_usuario, $db_senha);
     $metodo = $_SERVER['REQUEST_METHOD'];
+
+    // ===== NOVO: ROTA DE HEALTH CHECK =====
+    if ($metodo === 'GET' && (isset($_GET['health']) || isset($_GET['check']) || isset($_GET['status']))) {
+        handleHealthCheck($pdo);
+    }
 
     // Tratamento de Imagens Servidas / Visualizadas
     if ($metodo === 'GET' && isset($_GET['view_image'])) {
@@ -325,10 +388,10 @@ try {
                 $publicUrl = 'api.php?view_image=' . urlencode($uniqueFilename);
 
                 // Salva no banco de dados
-                $stmt = $pdo->prepare(""
+                $stmt = $pdo->prepare("
                     INSERT INTO imagens_arquivos (guid, nome_original, nome_arquivo, caminho_servidor, url_publica, tipo_mime, tamanho_bytes, usuario_id)
                     VALUES (:guid, :original, :arquivo, :caminho, :url, :mime, :tamanho, :usuario)
-                """);
+                ");
                 $stmt->execute([
                     ':guid' => $guid,
                     ':original' => $originalName,
@@ -340,14 +403,26 @@ try {
                     ':usuario' => $usuario_id
                 ]);
 
-                echo json_encode([
-                    'success' => true,
-                    'message' => 'Imagem salva no servidor com ID único e registrada no banco.',
-                    'imageId' => $guid,
-                    'filename' => $uniqueFilename,
-                    'url' => $publicUrl,
-                    'size' => $size
-                ]);
+                // ===== NOVO: Validação pós-inserção =====
+                $verifyStmt = $pdo->prepare("SELECT id FROM imagens_arquivos WHERE guid = :guid LIMIT 1");
+                $verifyStmt->execute([':guid' => $guid]);
+                $verificacao = $verifyStmt->fetch();
+
+                if ($verificacao) {
+                    echo json_encode([
+                        'success' => true,
+                        'message' => 'Imagem salva no servidor com ID único e registrada no banco.',
+                        'imageId' => $guid,
+                        'filename' => $uniqueFilename,
+                        'url' => $publicUrl,
+                        'size' => $size,
+                        'database_confirmed' => true,
+                        'db_id' => $verificacao['id'],
+                        'banco_tipo' => $usando_mysql_real ? 'MySQL Real' : 'SQLite Fallback'
+                    ]);
+                } else {
+                    throw new Exception('Falha na validação pós-inserção: imagem não foi confirmada no banco');
+                }
                 exit;
             }
         }
@@ -385,10 +460,10 @@ try {
                 $mime = 'image/' . ($ext === 'jpg' ? 'jpeg' : $ext);
                 $publicUrl = 'api.php?view_image=' . urlencode($uniqueFilename);
 
-                $stmt = $pdo->prepare(""
+                $stmt = $pdo->prepare("
                     INSERT INTO imagens_arquivos (guid, nome_original, nome_arquivo, caminho_servidor, url_publica, tipo_mime, tamanho_bytes, usuario_id)
                     VALUES (:guid, :original, :arquivo, :caminho, :url, :mime, :tamanho, :usuario)
-                """);
+                ");
                 $stmt->execute([
                     ':guid' => $guid,
                     ':original' => $originalName,
@@ -400,14 +475,26 @@ try {
                     ':usuario' => (int)($payload['usuario_id'] ?? 1)
                 ]);
 
-                echo json_encode([
-                    'success' => true,
-                    'message' => 'Imagem Base64 convertida e gravada fisicamente no servidor com ID único.',
-                    'imageId' => $guid,
-                    'filename' => $uniqueFilename,
-                    'url' => $publicUrl,
-                    'size' => $size
-                ]);
+                // ===== NOVO: Validação pós-inserção =====
+                $verifyStmt = $pdo->prepare("SELECT id FROM imagens_arquivos WHERE guid = :guid LIMIT 1");
+                $verifyStmt->execute([':guid' => $guid]);
+                $verificacao = $verifyStmt->fetch();
+
+                if ($verificacao) {
+                    echo json_encode([
+                        'success' => true,
+                        'message' => 'Imagem Base64 convertida e gravada fisicamente no servidor com ID único.',
+                        'imageId' => $guid,
+                        'filename' => $uniqueFilename,
+                        'url' => $publicUrl,
+                        'size' => $size,
+                        'database_confirmed' => true,
+                        'db_id' => $verificacao['id'],
+                        'banco_tipo' => $usando_mysql_real ? 'MySQL Real' : 'SQLite Fallback'
+                    ]);
+                } else {
+                    throw new Exception('Falha na validação pós-inserção: imagem Base64 não foi confirmada no banco');
+                }
                 exit;
             }
         }
@@ -438,6 +525,7 @@ try {
 
         $usuario_id = $payload['usuario_id'] ?? $payload['userId'] ?? 1;
         $mapeamento = [];
+        $itens_confirmados = 0;
 
         $pdo->beginTransaction();
 
@@ -460,11 +548,11 @@ try {
 
             if ($registroExistente) {
                 $idBanco = (int)$registroExistente['id'];
-                $updateStmt = $pdo->prepare(""
+                $updateStmt = $pdo->prepare("
                     UPDATE registros_sincronizacao 
                     SET dados_json = :dados_json, tipo_entidade = :tipo, usuario_id = :usuario_id, atualizado_em = CURRENT_TIMESTAMP
                     WHERE id = :id
-                """);
+                ");
                 $updateStmt->execute([
                     ':dados_json' => $dados_json,
                     ':tipo' => $tipo_entidade,
@@ -473,11 +561,12 @@ try {
                 ]);
 
                 $mapeamento[] = ['guid' => $guid, 'id_banco' => $idBanco, 'tipo' => $tipo_entidade, 'status' => 'atualizado'];
+                $itens_confirmados++;
             } else {
-                $insertStmt = $pdo->prepare(""
+                $insertStmt = $pdo->prepare("
                     INSERT INTO registros_sincronizacao (guid, tipo_entidade, usuario_id, dados_json, atualizado_em)
                     VALUES (:guid, :tipo, :usuario_id, :dados_json, CURRENT_TIMESTAMP)
-                """);
+                ");
                 $insertStmt->execute([
                     ':guid' => $guid,
                     ':tipo' => $tipo_entidade,
@@ -487,17 +576,18 @@ try {
 
                 $idBanco = (int)$pdo->lastInsertId();
                 $mapeamento[] = ['guid' => $guid, 'id_banco' => $idBanco, 'tipo' => $tipo_entidade, 'status' => 'inserido'];
+                $itens_confirmados++;
             }
 
             // 2. Persistência especializada por tipo de entidade
             $d = is_array($dados) ? $dados : json_decode($dados_json, true);
 
             if ($tipo_entidade === 'checklist' && is_array($d)) {
-                $chkStmt = $pdo->prepare(""
+                $chkStmt = $pdo->prepare("
                     INSERT INTO checklists_laudos (guid, protocol_number, customer_id, technician_id, status, service_value, dados_json)
                     VALUES (:guid, :proto, :cust, :tech, :stat, :val, :dados)
                     ON DUPLICATE KEY UPDATE protocol_number = :proto, customer_id = :cust, technician_id = :tech, status = :stat, service_value = :val, dados_json = :dados
-                """);
+                ");
                 try {
                     $chkStmt->execute([
                         ':guid' => $guid,
@@ -525,11 +615,11 @@ try {
                 }
             } elseif ($tipo_entidade === 'contact' && is_array($d)) {
                 $tipoContato = !empty($d['isTechnician']) ? 'tecnico' : 'cliente';
-                $conStmt = $pdo->prepare(""
+                $conStmt = $pdo->prepare("
                     INSERT INTO cadastros_contatos (guid, tipo, nome, documento, telefone, email, cidade, uf, dados_json)
                     VALUES (:guid, :tipo, :nome, :doc, :tel, :email, :cidade, :uf, :dados)
                     ON DUPLICATE KEY UPDATE tipo = :tipo, nome = :nome, documento = :doc, telefone = :tel, email = :email, cidade = :cidade, uf = :uf, dados_json = :dados
-                """);
+                ");
                 try {
                     $conStmt->execute([
                         ':guid' => $guid,
@@ -559,11 +649,11 @@ try {
                     ]);
                 }
             } elseif ($tipo_entidade === 'appointment' && is_array($d)) {
-                $aptStmt = $pdo->prepare(""
+                $aptStmt = $pdo->prepare("
                     INSERT INTO agendamentos_ordens (guid, customer_id, technician_id, data_agendamento, hora_agendamento, status, valor_total, dados_json)
                     VALUES (:guid, :cust, :tech, :data, :hora, :stat, :val, :dados)
                     ON DUPLICATE KEY UPDATE customer_id = :cust, technician_id = :tech, data_agendamento = :data, hora_agendamento = :hora, status = :stat, valor_total = :val, dados_json = :dados
-                """);
+                ");
                 try {
                     $aptStmt->execute([
                         ':guid' => $guid,
@@ -591,11 +681,11 @@ try {
                     ]);
                 }
             } elseif ($tipo_entidade === 'financial' && is_array($d)) {
-                $finStmt = $pdo->prepare(""
+                $finStmt = $pdo->prepare("
                     INSERT INTO financeiro_lancamentos (guid, customer_id, technician_id, checklist_id, mes_referencia, valor_bruto, valor_liquido, comissao_tecnico, status_pagamento, dados_json)
                     VALUES (:guid, :cust, :tech, :chk, :mes, :vbruto, :vliq, :comissao, :stat, :dados)
                     ON DUPLICATE KEY UPDATE customer_id = :cust, technician_id = :tech, checklist_id = :chk, mes_referencia = :mes, valor_bruto = :vbruto, valor_liquido = :vliq, comissao_tecnico = :comissao, status_pagamento = :stat, dados_json = :dados
-                """);
+                ");
                 try {
                     $finStmt->execute([
                         ':guid' => $guid,
@@ -627,10 +717,10 @@ try {
                     ]);
                 }
             } elseif ($tipo_entidade === 'audit_log' && is_array($d)) {
-                $audStmt = $pdo->prepare(""
+                $audStmt = $pdo->prepare("
                     INSERT INTO auditoria_historico (guid, entity_type, entity_id, acao, usuario, resumo, dados_json)
                     VALUES (:guid, :ent_type, :ent_id, :acao, :usuario, :resumo, :dados)
-                """);
+                ");
                 $audStmt->execute([
                     ':guid' => $guid,
                     ':ent_type' => $d['entityType'] ?? 'geral',
@@ -649,8 +739,9 @@ try {
             'success' => true,
             'message' => 'Lote com Checklists, Cadastros, Agenda, Financeiro e Auditoria consolidado no Banco de Dados.',
             'total_processados' => count($mapeamento),
-            'itemsProcessed' => count($mapeamento),
+            'itemsProcessed' => $itens_confirmados,
             'mapeamento' => $mapeamento,
+            'banco_tipo' => $usando_mysql_real ? 'MySQL Real' : 'SQLite Fallback',
             'servidor_timestamp' => date('Y-m-d H:i:s')
         ]);
         exit;
@@ -678,9 +769,11 @@ try {
             'success' => true,
             'banco_instalado' => true,
             'driver' => $pdo->getAttribute(PDO::ATTR_DRIVER_NAME),
+            'usando_mysql_real' => $usando_mysql_real,
             'estatisticas' => $stats,
             'total' => count($registros),
-            'registros' => $registros
+            'registros' => $registros,
+            'servidor_timestamp' => date('Y-m-d H:i:s')
         ]);
         exit;
     }
@@ -692,6 +785,7 @@ try {
     http_response_code(500);
     echo json_encode([
         'success' => false, 
-        'message' => 'Erro na API PHP: ' . $e->getMessage()
+        'message' => 'Erro na API PHP: ' . $e->getMessage(),
+        'timestamp' => date('Y-m-d H:i:s')
     ]);
 }

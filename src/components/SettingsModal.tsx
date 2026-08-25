@@ -70,7 +70,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 )}
               </div>
               <div className="flex-1 w-full">
-                <label className="block text-slate-700 mb-1 font-bold">URL da Logomarca (PNG/JPG/Drive)</label>
+                <label className="block text-slate-700 mb-1 font-bold">URL da Logomarca (PNG/JPG/Web)</label>
                 <input
                   type="text"
                   value={settings.logoUrl || ''}

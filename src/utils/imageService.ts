@@ -102,6 +102,7 @@ export class ImageService {
     });
   }
 
+
   /**
    * Cria um objeto de foto de inspeção com ID único, cache local e envio ao servidor
    */
@@ -138,10 +139,6 @@ export class ImageService {
       imageId: uniqueId,
       filename: `${uniqueId}.jpg`,
       isSavedOnServer: false,
-      driveUrl: `https://drive.google.com/drive/folders/elthera-solar-${customerId || 'geral'}`,
-      driveFileId: `drive-file-${uniqueId}`,
-      driveFolderName: `Elthera / Clientes / ${clientName || 'Cliente'} / Fotos`,
-      isSyncedToDrive: true,
     };
 
     // Tenta upload assíncrono para o servidor se online

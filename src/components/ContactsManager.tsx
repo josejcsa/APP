@@ -384,7 +384,7 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
           <button
             type="button"
             onClick={() => setIsSheetsModalOpen(true)}
-            title="Configurações e Sincronização Google Sheets & Drive"
+            title="Configurações e Sincronização Google Sheets"
             className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center shadow-2xs"
           >
             <Settings className="w-4 h-4" />

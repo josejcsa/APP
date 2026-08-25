@@ -82,8 +82,6 @@ export const DEFAULT_SETTINGS: CompanySettings = {
   googleSheetId: '1cxPXrEv4TInyNjRK_GQs8-TQ5wzesG9Ho0gv8j5-w-A',
   googleCalendarId: '256f7c038eaf3761a6266660d80213727d070d59a07c26a715d6f00f1f6c0625@group.calendar.google.com',
   googleCalendarIcalUrl: 'https://calendar.google.com/calendar/ical/256f7c038eaf3761a6266660d80213727d070d59a07c26a715d6f00f1f6c0625%40group.calendar.google.com/private-27219e3eda7c4ad0193e7e6ce43decb8/basic.ics',
-  googleDriveEnabled: true,
-  googleDriveFolder: 'Elthera',
   currentUser: 'Tec. Almeida Jr. (Técnico)',
   autoSyncIntervalMinutes: 5,
   pricePerKwpDefault: 0.69568,
@@ -986,9 +984,6 @@ class StorageService {
     }
     if (!s.googleSheetId || s.googleSheetId === 'Elthera_Controle_Financeiro_2026') {
       s.googleSheetId = '1cxPXrEv4TInyNjRK_GQs8-TQ5wzesG9Ho0gv8j5-w-A';
-    }
-    if (!s.googleDriveFolder || s.googleDriveFolder.includes('Inspeções e Fotos')) {
-      s.googleDriveFolder = 'Elthera';
     }
     return s;
   }

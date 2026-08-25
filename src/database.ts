@@ -48,7 +48,7 @@ export function getDatabasePool(): mysql.Pool {
       connectionLimit: 10,
       queueLimit: 0,
       enableKeepAlive: true,
-      keepAliveInitialDelayMs: 0,
+      keepAliveInitialDelay: 0,
     });
 
     console.log(`✅ MySQL database pool initialized: ${dbUser}@${dbHost}:${dbPort}/${dbName}`);

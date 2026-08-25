@@ -122,10 +122,6 @@ export interface InspectionPhoto {
   caption: string;
   timestamp: string;
   category: 'panoramica' | 'detalhe_sujeira' | 'inversor' | 'avaria' | 'pos_limpeza' | 'pos_inversor';
-  driveUrl?: string;
-  driveFileId?: string;
-  driveFolderName?: string;
-  isSyncedToDrive?: boolean;
 }
 
 export interface VisualDefects {
@@ -219,9 +215,6 @@ export interface TechnicalChecklist extends BaseOfflineEntity {
   paymentStatus: 'pago' | 'pendente';
   syncedWithSheets?: boolean;
   syncedWithCalendar?: boolean;
-  syncedWithDrive?: boolean;
-  driveFolderUrl?: string;
-  driveFolderName?: string;
   createdBy?: string;
   createdAt: string;
   updatedBy?: string;
@@ -300,8 +293,6 @@ export interface CompanySettings {
   googleSheetId?: string;
   googleCalendarId?: string;
   googleCalendarIcalUrl?: string;
-  googleDriveEnabled?: boolean;
-  googleDriveFolder?: string;
   currentUser?: string;
   autoSyncIntervalMinutes: number;
   phpApiEndpointUrl?: string;

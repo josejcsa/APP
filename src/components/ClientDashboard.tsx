@@ -365,7 +365,7 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                           )}
                         </div>
                         <div className="text-emerald-700 font-semibold flex items-center gap-1">
-                          <span>☁️ Nuvem: {chk.driveFolderName || `Elthera / Clientes / ${currentClient.name} / Fotos`}</span>
+                          <span>✅ Sincronizado</span>
                         </div>
                       </div>
                     </div>

@@ -352,9 +352,6 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
         caption: 'Módulos com sujidade e fuligem acumuladas antes da limpeza.',
         timestamp: new Date().toISOString(),
         category: 'detalhe_sujeira' as const,
-        driveUrl: `https://drive.google.com/drive/folders/elthera-solar-${customerId || 'geral'}`,
-        driveFolderName: `Elthera / Clientes / ${selectedClient?.name || 'Cliente'} / Fotos`,
-        isSyncedToDrive: true,
       }
     ];
 
@@ -365,9 +362,6 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
         caption: 'Módulos perfeitamente limpos e sem resíduos pós-higienização.',
         timestamp: new Date().toISOString(),
         category: 'pos_limpeza' as const,
-        driveUrl: `https://drive.google.com/drive/folders/elthera-solar-${customerId || 'geral'}`,
-        driveFolderName: `Elthera / Clientes / ${selectedClient?.name || 'Cliente'} / Fotos`,
-        isSyncedToDrive: true,
       }
     ];
 
@@ -379,8 +373,6 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
       protocolNumber: protocolNumber || checklistToEdit?.protocolNumber || '',
       date: serviceDate,
       status,
-      driveFolderUrl: `https://drive.google.com/drive/folders/elthera-solar-${customerId || 'geral'}`,
-      driveFolderName: `Elthera / Clientes / ${selectedClient?.name || 'Cliente'} / Laudos`,
       before: {
         readingKwBefore: Number(readingKwBefore),
         readingKwhBefore: Number(readingKwhBefore),

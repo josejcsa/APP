@@ -422,7 +422,7 @@ export const PdfReportDocument: React.FC<{ checklist: TechnicalChecklist }> = ({
           )}
         </div>
         <div className="text-emerald-700">
-          ☁️ Nuvem Elthera: {checklist.driveFolderName || `Elthera / Clientes / ${customer?.name || 'Cliente'} / Fotos`}
+          ✅ Protocolo Registrado • Elthera Cloud
         </div>
       </div>
     </div>

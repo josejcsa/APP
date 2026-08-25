@@ -1,0 +1,63 @@
+BEGIN:VCALENDAR
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+VERSION:2.0
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:EltheraOnline
+X-WR-TIMEZONE:America/Sao_Paulo
+X-WR-CALDESC:Agendamentos compromissos Elthera
+BEGIN:VEVENT
+DTSTART:20260823T140200Z
+DTEND:20260823T160200Z
+DTSTAMP:20260815T033955Z
+ORGANIZER;CN=256f7c038eaf3761a6266660d80213727d070d59a07c26a715d6f00f1f6c06
+ 25@group.calendar.google.com:mailto:256f7c038eaf3761a6266660d80213727d070d5
+ 9a07c26a715d6f00f1f6c0625@group.calendar.google.com
+UID:oapfqcam48pfbaqrmp9g3jhnvo@google.com
+ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=Dr
+ . Carlos Eduardo Ferreirass;X-NUM-GUESTS=0:mailto:josecarlos.s.a@hotmail.co
+ m
+ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;CN=Ka
+ rina Fagundes (GestoraAdministrativo);X-NUM-GUESTS=0:mailto:karinafagundes@
+ solarcleanpro.com.br
+CREATED:20260814T042145Z
+DESCRIPTION:Nome do Cliente: Dr. Carlos Eduardo Ferreirass\nLocal: Rua Curi
+ tiba\, 480 - Bairro Paraíso - São Paulo/SP - CEP: 04005-030\nServiços a exe
+ cutar: Limpeza Técnica Padrão\, Limpeza Pesada com Desincrustante Solar\nDu
+ ração: 120 minutos\nObservação para o técnico: Limpesa Especial para client
+ e Especial parararara :)\n\nMarcador: em andamento
+LAST-MODIFIED:20260814T042145Z
+LOCATION:Rua Curitiba\, 480 - Bairro Paraíso - São Paulo/SP - CEP: 04005-03
+ 0
+SEQUENCE:0
+STATUS:CONFIRMED
+SUMMARY:Visita tecnica Dr. Carlos Eduardo Ferreirass
+TRANSP:OPAQUE
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20260820T040000Z
+DTEND:20260820T060000Z
+DTSTAMP:20260815T033955Z
+ORGANIZER;CN=256f7c038eaf3761a6266660d80213727d070d59a07c26a715d6f00f1f6c06
+ 25@group.calendar.google.com:mailto:256f7c038eaf3761a6266660d80213727d070d5
+ 9a07c26a715d6f00f1f6c0625@group.calendar.google.com
+UID:dkk76au3sjfipghsl2q50t6ap8@google.com
+ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;X-NUM
+ -GUESTS=0:mailto:financeiro@paodourado.com.br
+ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;X-NUM
+ -GUESTS=0:mailto:henriquedaher@elthera.com.br
+CREATED:20260814T044845Z
+DESCRIPTION:Nome do Cliente: Padaria & Confeitaria Pão Dourado\nLocal: Av. 
+ Brigadeiro Luís Antônio\, 2100 - Bairro Bela Vista - São Paulo/SP - CEP: 01
+ 318-002\nServiços a executar: Aplicação de Nano-revestimento Hidrofóbico\nD
+ uração: 120 minutos\nObservação para o técnico: bhuaaaa\n\nMarcador: agenda
+ do
+LAST-MODIFIED:20260814T044846Z
+LOCATION:Av. Brigadeiro Luís Antônio\, 2100 - Bairro Bela Vista - São Paulo
+ /SP - CEP: 01318-002
+SEQUENCE:0
+STATUS:CONFIRMED
+SUMMARY:Visita tecnica Padaria & Confeitaria Pão Dourado
+TRANSP:OPAQUE
+END:VEVENT
+END:VCALENDAR

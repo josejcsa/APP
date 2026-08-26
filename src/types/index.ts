@@ -41,6 +41,8 @@ export interface AuthSession {
   phone: string;
   role: 'admin' | 'technician' | 'client';
   isTechnician?: boolean;
+  isAdmin?: boolean;
+  isPartner?: boolean;
   contactId?: string;
   allowedNavTabs: NavTabId[];
   loginTimestamp: string;
@@ -56,11 +58,13 @@ export interface Contact extends BaseOfflineEntity {
   id: string;
   name: string;
   isTechnician: boolean; // Flag to separate Client vs Technician in unified registry
+  isAdmin?: boolean; // Usuário Administrador com permissões completas
+  isPartner?: boolean; // Usuário Parceiro / Integrador (Informativo)
   personType: 'PF' | 'PJ';
   document: string; // CPF or CNPJ
   email: string;
   phone: string; // WhatsApp (Login identifier)
-  password?: string; // 8 alphanumeric characters access password
+  password?: string; // 8 alphanumeric characters access password (exclusivo do banco / autenticação)
   allowedNavTabs?: NavTabId[]; // Active navbar items permissions
   address: Address;
   solarSystem?: SolarSystemInfo; // For clients
@@ -275,6 +279,8 @@ export interface SyncResult {
   errors?: string[];
 }
 
+export type SyncFilterStrategy = 'all_recent' | 'my_recent' | 'hybrid_my_and_recent';
+
 export interface CompanySettings {
   companyName: string;
   tradingName: string;
@@ -301,4 +307,7 @@ export interface CompanySettings {
   pricePerModule?: number;
   minServiceFee?: number;
   kwhPriceAverage?: number;
+  maxLocalRecordsLimit?: number; // Limite de registros salvos localmente (padrão 50, até 200)
+  syncFilterStrategy?: SyncFilterStrategy; // Ordem/Critério de download
+  autoDownloadRemoteData?: boolean; // Se baixa automaticamente registros de outros usuários ao sincronizar
 }

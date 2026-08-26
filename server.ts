@@ -11,7 +11,8 @@ import {
   closeDatabaseConnections,
   initializeDatabaseTables,
   syncBatchData,
-  getTableCounts
+  getTableCounts,
+  fetchRemoteSyncRecords
 } from './src/database';
 
 dotenv.config();
@@ -159,7 +160,7 @@ async function startServer() {
   // SINCRONIZAÇÃO DE DADOS - ENDPOINTS PRINCIPAIS
   // ============================================
   
-  // GET - Retorna estatísticas e status
+  // GET - Retorna estatísticas, status e registros remotos para pull
   app.get(['/api/sync', '/start/api/api.php', '/start/api/sync.php', '/api/api.php', '/api.php'], async (req, res) => {
     try {
       if (!dbHealthy) {
@@ -171,8 +172,13 @@ async function startServer() {
         });
       }
 
+      const limit = Number(req.query.limit) || 50;
+      const strategy = (req.query.strategy as any) || 'hybrid_my_and_recent';
+      const userId = (req.query.usuario_id || req.query.userId || 1) as any;
+
       const stats = await getTableCounts();
       const dbStats = await getDatabaseStats();
+      const remoteRecords = await fetchRemoteSyncRecords({ limit, strategy, userId });
 
       return res.json({
         success: true,
@@ -181,6 +187,8 @@ async function startServer() {
         usando_mysql_real: true,
         estatisticas: stats,
         database: dbStats,
+        registros_remotos: remoteRecords,
+        total_remotos: remoteRecords.length,
         servidor_timestamp: new Date().toISOString()
       });
     } catch (error: any) {
@@ -191,7 +199,7 @@ async function startServer() {
     }
   });
 
-  // POST - Sincroniza dados em lote
+  // POST - Sincroniza dados em lote (Push + Pull Híbrido)
   app.post(['/api/sync', '/start/api/api.php', '/start/api/sync.php', '/api/api.php', '/api.php'], async (req, res) => {
     try {
       const payload = req.body || {};
@@ -213,23 +221,34 @@ async function startServer() {
 
       const items = payload.lote || payload.itens || payload.queue || payload.items || [];
       const usuarioId = payload.usuario_id || payload.userId || 1;
+      const syncOptions = payload.sync_options || {};
+      const limit = Number(syncOptions.limit || payload.limit) || 50;
+      const strategy = syncOptions.strategy || payload.strategy || 'hybrid_my_and_recent';
 
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Nenhum item para sincronizar. Use: lote, itens, queue ou items'
-        });
+      let result = {
+        success: true,
+        itemsProcessed: 0,
+        mapeamento: [] as any[],
+        banco_tipo: 'MySQL Real',
+        servidor_timestamp: new Date().toISOString()
+      };
+
+      // Executa envio dos itens pendentes se houver
+      if (Array.isArray(items) && items.length > 0) {
+        result = await syncBatchData(items, usuarioId);
       }
 
-      // Executa sincronização com validação
-      const result = await syncBatchData(items, usuarioId);
+      // Busca dados atualizados da nuvem (Pull Híbrido)
+      const remoteRecords = await fetchRemoteSyncRecords({ limit, strategy, userId: usuarioId });
 
       return res.json({
         success: result.success,
-        message: `${result.itemsProcessed} itens sincronizados com sucesso.`,
+        message: `${result.itemsProcessed} itens enviados e ${remoteRecords.length} registros remotos sincronizados.`,
         total_processados: result.itemsProcessed,
         itemsProcessed: result.itemsProcessed,
         mapeamento: result.mapeamento,
+        registros_remotos: remoteRecords,
+        total_remotos: remoteRecords.length,
         banco_tipo: result.banco_tipo,
         usando_mysql_real: true,
         servidor_timestamp: result.servidor_timestamp

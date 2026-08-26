@@ -1,22 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Phone,
   Lock,
   Eye,
   EyeOff,
   ShieldCheck,
-  Zap,
   ArrowRight,
   User,
-  Users,
   AlertCircle,
-  HelpCircle,
-  CheckCircle2,
+  KeyRound,
+  XCircle,
   Sparkles,
-  KeyRound
+  Shield,
+  Briefcase
 } from 'lucide-react';
 import { AuthSession } from '../types';
-import { storage, MASTER_ADMIN_USER, MASTER_ADMIN_PASSWORD, ALL_NAV_TABS } from '../utils/storage';
+import { storage } from '../utils/storage';
 
 interface LoginScreenProps {
   onLoginSuccess: (session: AuthSession) => void;
@@ -28,10 +27,25 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showDemoAccounts, setShowDemoAccounts] = useState(false);
+  const [lastUser, setLastUser] = useState<{
+    name: string;
+    phone: string;
+    role?: string;
+    isTechnician?: boolean;
+    isAdmin?: boolean;
+    isPartner?: boolean;
+  } | null>(null);
 
   const settings = storage.getSettings();
-  const contacts = storage.getContacts();
+
+  useEffect(() => {
+    const savedLast = storage.getLastLoggedUser();
+    if (savedLast && savedLast.phone) {
+      setLastUser(savedLast);
+      // Pre-preenche o telefone do último usuário para conveniência
+      setPhone(savedLast.phone);
+    }
+  }, []);
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let val = e.target.value.replace(/\D/g, '');
@@ -74,14 +88,22 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     }, 250);
   };
 
-  const handleQuickLogin = (quickPhone: string, quickPass: string) => {
-    setPhone(quickPhone);
-    setPassword(quickPass);
+  const handleSelectLastUser = () => {
+    if (!lastUser) return;
+    setPhone(lastUser.phone);
     setErrorMessage('');
-    const res = storage.login(quickPhone, quickPass);
-    if (res.success && res.session) {
-      onLoginSuccess(res.session);
+    const passwordInput = document.getElementById('password-input');
+    if (passwordInput) {
+      passwordInput.focus();
     }
+  };
+
+  const handleClearLastUser = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    storage.clearLastLoggedUser();
+    setLastUser(null);
+    setPhone('');
+    setPassword('');
   };
 
   return (
@@ -135,6 +157,59 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             </p>
           </div>
 
+          {/* PREVIEW DO ÚLTIMO USUÁRIO LOGADO NO DISPOSITIVO */}
+          {lastUser && (
+            <div
+              onClick={handleSelectLastUser}
+              className="p-3.5 bg-amber-50/70 hover:bg-amber-50 border border-amber-200/90 rounded-2xl cursor-pointer transition-all flex items-center justify-between group shadow-xs"
+              title="Clique para preencher o telefone e focar na senha"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-amber-400 text-amber-950 flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                  {lastUser.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold text-slate-900 text-xs truncate group-hover:text-amber-950">
+                      {lastUser.name}
+                    </span>
+                    {lastUser.isAdmin ? (
+                      <span className="text-[9px] px-1.5 py-0.2 bg-purple-100 text-purple-800 rounded font-bold border border-purple-200">
+                        ADM
+                      </span>
+                    ) : lastUser.isPartner ? (
+                      <span className="text-[9px] px-1.5 py-0.2 bg-sky-100 text-sky-800 rounded font-bold border border-sky-200">
+                        Parceiro
+                      </span>
+                    ) : lastUser.isTechnician ? (
+                      <span className="text-[9px] px-1.5 py-0.2 bg-blue-100 text-blue-800 rounded font-bold border border-blue-200">
+                        Técnico
+                      </span>
+                    ) : (
+                      <span className="text-[9px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold border border-emerald-200">
+                        Cliente
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-slate-500 block truncate">
+                    Último acesso neste navegador • {lastUser.phone}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                <button
+                  type="button"
+                  onClick={handleClearLastUser}
+                  className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-white/80 transition-colors"
+                  title="Trocar de conta / Remover lembrete deste navegador"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Error Banner */}
           {errorMessage && (
             <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-2.5 text-rose-800 text-xs animate-shake">
@@ -164,7 +239,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 />
               </div>
               <span className="text-[10px] text-slate-400 block pl-1">
-                Número cadastrado para seu usuário técnico ou cliente.
+                Número de WhatsApp cadastrado no seu perfil.
               </span>
             </div>
 
@@ -181,11 +256,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3 pointer-events-none" />
                 <input
+                  id="password-input"
                   type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={handlePasswordChange}
-                  placeholder="Ex: a8B9x2Z1"
+                  placeholder="Digite sua senha"
                   maxLength={16}
                   className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900 tracking-wider focus:bg-white focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 transition-all outline-none"
                 />
@@ -199,7 +275,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 </button>
               </div>
               <span className="text-[10px] text-slate-400 block pl-1">
-                Composta por letras e números configurada no seu cadastro.
+                Senha de acesso fornecida pelo administrador do sistema.
               </span>
             </div>
 
@@ -222,88 +298,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               )}
             </button>
           </form>
-
-          {/* Quick Demo Accounts Helper */}
-          <div className="pt-2 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setShowDemoAccounts(!showDemoAccounts)}
-              className="w-full py-1.5 text-[11px] font-bold text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <Sparkles className="w-3 h-3 text-amber-500" />
-              <span>{showDemoAccounts ? 'Ocultar Contas de Teste' : 'Ver Contas de Acesso Rápido / Demonstração'}</span>
-            </button>
-
-            {showDemoAccounts && (
-              <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-[11px]">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  Clique em um perfil para preencher e testar:
-                </p>
-
-                {/* Master Admin */}
-                <button
-                  type="button"
-                  onClick={() => handleQuickLogin('(47) 98863-9517', MASTER_ADMIN_PASSWORD)}
-                  className="w-full p-2 bg-white hover:bg-amber-50 border border-slate-200 hover:border-amber-300 rounded-xl text-left flex items-center justify-between transition-all cursor-pointer group"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-[10px]">
-                      👑
-                    </div>
-                    <div>
-                      <span className="font-bold text-slate-900 block group-hover:text-amber-950">
-                        Administrador Master (Elthera)
-                      </span>
-                      <span className="text-[10px] text-slate-500">
-                        Acesso total (6 abas permitidas) • Senha: {MASTER_ADMIN_PASSWORD}
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-amber-700 font-bold text-[10px]">Entrar ➔</span>
-                </button>
-
-                {/* Registered Contacts with Passwords */}
-                {contacts.slice(0, 3).map((c) => {
-                  const contactPass = c.password || 'elth2026';
-                  const tabCount = c.allowedNavTabs?.length || (c.isTechnician ? 3 : 1);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => handleQuickLogin(c.phone, contactPass)}
-                      className="w-full p-2 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-left flex items-center justify-between transition-all cursor-pointer group"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div
-                          className={`w-6 h-6 rounded-lg flex items-center justify-center font-bold text-[10px] ${
-                            c.isTechnician ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'
-                          }`}
-                        >
-                          {c.isTechnician ? 'T' : 'C'}
-                        </div>
-                        <div className="min-w-0">
-                          <span className="font-bold text-slate-900 block truncate group-hover:text-slate-950">
-                            {c.name} ({c.isTechnician ? 'Técnico' : 'Cliente'})
-                          </span>
-                          <span className="text-[10px] text-slate-500">
-                            {tabCount} abas ativas • Senha: {contactPass}
-                          </span>
-                        </div>
-                      </div>
-                      <span className="text-slate-600 font-bold text-[10px]">Entrar ➔</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Security Footer Notice */}
         <div className="text-center space-y-1 text-[11px] text-slate-400">
           <p className="flex items-center justify-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Sistema protegido com senhas alfanuméricas & log de auditoria</span>
+            <span>Sistema protegido • Autenticação direta no banco de dados</span>
           </p>
           <p className="text-[10px] text-slate-500">
             © {new Date().getFullYear()} Elthera Soluções em Energia Solar Ltda.

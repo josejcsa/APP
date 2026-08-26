@@ -534,10 +534,26 @@ try {
             if (!$guid) continue;
 
             $tipo_entidade = $item['tipo_entidade'] ?? $item['type'] ?? 'geral';
-            $dados = $item['dados'] ?? $item['data'] ?? $item;
-            $dados_json = is_string($item['dados_json'] ?? null) 
+            
+            // Decodificação robusta do objeto de dados
+            $d = null;
+            if (isset($item['dados']) && is_array($item['dados'])) {
+                $d = $item['dados'];
+            } elseif (isset($item['data']) && is_array($item['data'])) {
+                $d = $item['data'];
+            } elseif (!empty($item['dados_json'])) {
+                $decoded = is_string($item['dados_json']) ? json_decode($item['dados_json'], true) : $item['dados_json'];
+                if (is_array($decoded)) {
+                    $d = $decoded;
+                }
+            }
+            if (!$d || !is_array($d)) {
+                $d = $item;
+            }
+
+            $dados_json = !empty($item['dados_json']) && is_string($item['dados_json'])
                 ? $item['dados_json'] 
-                : json_encode($dados, JSON_UNESCAPED_UNICODE);
+                : json_encode($d, JSON_UNESCAPED_UNICODE);
 
             $itemUsuarioId = $item['usuario_id'] ?? $usuario_id;
 
@@ -580,9 +596,8 @@ try {
             }
 
             // 2. Persistência especializada por tipo de entidade
-            $d = is_array($dados) ? $dados : json_decode($dados_json, true);
-
-            if ($tipo_entidade === 'checklist' && is_array($d)) {
+            if ($tipo_entidade === 'checklist') {
+                $proto = $d['protocolNumber'] ?? $d['protocolo'] ?? ('SOL-' . substr(time(), -6));
                 $chkStmt = $pdo->prepare("
                     INSERT INTO checklists_laudos (guid, protocol_number, customer_id, technician_id, status, service_value, dados_json)
                     VALUES (:guid, :proto, :cust, :tech, :stat, :val, :dados)
@@ -591,11 +606,11 @@ try {
                 try {
                     $chkStmt->execute([
                         ':guid' => $guid,
-                        ':proto' => $d['protocolNumber'] ?? 'SOL-AUTO',
-                        ':cust' => $d['customerId'] ?? '',
-                        ':tech' => $d['technicianId'] ?? '',
+                        ':proto' => $proto,
+                        ':cust' => $d['customerId'] ?? $d['customer_id'] ?? '',
+                        ':tech' => $d['technicianId'] ?? $d['technician_id'] ?? '',
                         ':stat' => $d['status'] ?? 'rascunho',
-                        ':val' => (float)($d['serviceValue'] ?? 0),
+                        ':val' => (float)($d['serviceValue'] ?? $d['valor_servico'] ?? 0),
                         ':dados' => $dados_json
                     ]);
                 } catch (Exception $e) {
@@ -605,16 +620,23 @@ try {
                     $insStmt = $pdo->prepare("INSERT INTO checklists_laudos (guid, protocol_number, customer_id, technician_id, status, service_value, dados_json) VALUES (:guid, :proto, :cust, :tech, :stat, :val, :dados)");
                     $insStmt->execute([
                         ':guid' => $guid,
-                        ':proto' => $d['protocolNumber'] ?? 'SOL-AUTO',
-                        ':cust' => $d['customerId'] ?? '',
-                        ':tech' => $d['technicianId'] ?? '',
+                        ':proto' => $proto,
+                        ':cust' => $d['customerId'] ?? $d['customer_id'] ?? '',
+                        ':tech' => $d['technicianId'] ?? $d['technician_id'] ?? '',
                         ':stat' => $d['status'] ?? 'rascunho',
-                        ':val' => (float)($d['serviceValue'] ?? 0),
+                        ':val' => (float)($d['serviceValue'] ?? $d['valor_servico'] ?? 0),
                         ':dados' => $dados_json
                     ]);
                 }
-            } elseif ($tipo_entidade === 'contact' && is_array($d)) {
-                $tipoContato = !empty($d['isTechnician']) ? 'tecnico' : 'cliente';
+            } elseif ($tipo_entidade === 'contact') {
+                $tipoContato = (!empty($d['isTechnician']) || ($d['tipo'] ?? '') === 'tecnico') ? 'tecnico' : 'cliente';
+                $nome = $d['name'] ?? $d['nome'] ?? 'Contato Sem Nome';
+                $doc = $d['document'] ?? $d['documento'] ?? '';
+                $tel = $d['phone'] ?? $d['telefone'] ?? '';
+                $email = $d['email'] ?? '';
+                $cidade = $d['address']['city'] ?? $d['cidade'] ?? '';
+                $uf = $d['address']['state'] ?? $d['uf'] ?? '';
+
                 $conStmt = $pdo->prepare("
                     INSERT INTO cadastros_contatos (guid, tipo, nome, documento, telefone, email, cidade, uf, dados_json)
                     VALUES (:guid, :tipo, :nome, :doc, :tel, :email, :cidade, :uf, :dados)
@@ -624,12 +646,12 @@ try {
                     $conStmt->execute([
                         ':guid' => $guid,
                         ':tipo' => $tipoContato,
-                        ':nome' => $d['name'] ?? '',
-                        ':doc' => $d['document'] ?? '',
-                        ':tel' => $d['phone'] ?? '',
-                        ':email' => $d['email'] ?? '',
-                        ':cidade' => $d['address']['city'] ?? '',
-                        ':uf' => $d['address']['state'] ?? '',
+                        ':nome' => $nome,
+                        ':doc' => $doc,
+                        ':tel' => $tel,
+                        ':email' => $email,
+                        ':cidade' => $cidade,
+                        ':uf' => $uf,
                         ':dados' => $dados_json
                     ]);
                 } catch (Exception $e) {
@@ -639,16 +661,21 @@ try {
                     $insStmt->execute([
                         ':guid' => $guid,
                         ':tipo' => $tipoContato,
-                        ':nome' => $d['name'] ?? '',
-                        ':doc' => $d['document'] ?? '',
-                        ':tel' => $d['phone'] ?? '',
-                        ':email' => $d['email'] ?? '',
-                        ':cidade' => $d['address']['city'] ?? '',
-                        ':uf' => $d['address']['state'] ?? '',
+                        ':nome' => $nome,
+                        ':doc' => $doc,
+                        ':tel' => $tel,
+                        ':email' => $email,
+                        ':cidade' => $cidade,
+                        ':uf' => $uf,
                         ':dados' => $dados_json
                     ]);
                 }
-            } elseif ($tipo_entidade === 'appointment' && is_array($d)) {
+            } elseif ($tipo_entidade === 'appointment') {
+                $dataAg = $d['scheduledDate'] ?? $d['data_agendamento'] ?? date('Y-m-d');
+                $horaAg = $d['scheduledTime'] ?? $d['hora_agendamento'] ?? '';
+                $statAg = $d['status'] ?? 'agendado';
+                $valAg = (float)($d['totalAmount'] ?? $d['valor_total'] ?? 0);
+
                 $aptStmt = $pdo->prepare("
                     INSERT INTO agendamentos_ordens (guid, customer_id, technician_id, data_agendamento, hora_agendamento, status, valor_total, dados_json)
                     VALUES (:guid, :cust, :tech, :data, :hora, :stat, :val, :dados)
@@ -657,12 +684,12 @@ try {
                 try {
                     $aptStmt->execute([
                         ':guid' => $guid,
-                        ':cust' => $d['customerId'] ?? '',
-                        ':tech' => $d['technicianId'] ?? '',
-                        ':data' => $d['scheduledDate'] ?? '',
-                        ':hora' => $d['scheduledTime'] ?? '',
-                        ':stat' => $d['status'] ?? 'agendado',
-                        ':val' => (float)($d['totalAmount'] ?? 0),
+                        ':cust' => $d['customerId'] ?? $d['customer_id'] ?? '',
+                        ':tech' => $d['technicianId'] ?? $d['technician_id'] ?? '',
+                        ':data' => $dataAg,
+                        ':hora' => $horaAg,
+                        ':stat' => $statAg,
+                        ':val' => $valAg,
                         ':dados' => $dados_json
                     ]);
                 } catch (Exception $e) {
@@ -671,16 +698,22 @@ try {
                     $insStmt = $pdo->prepare("INSERT INTO agendamentos_ordens (guid, customer_id, technician_id, data_agendamento, hora_agendamento, status, valor_total, dados_json) VALUES (:guid, :cust, :tech, :data, :hora, :stat, :val, :dados)");
                     $insStmt->execute([
                         ':guid' => $guid,
-                        ':cust' => $d['customerId'] ?? '',
-                        ':tech' => $d['technicianId'] ?? '',
-                        ':data' => $d['scheduledDate'] ?? '',
-                        ':hora' => $d['scheduledTime'] ?? '',
-                        ':stat' => $d['status'] ?? 'agendado',
-                        ':val' => (float)($d['totalAmount'] ?? 0),
+                        ':cust' => $d['customerId'] ?? $d['customer_id'] ?? '',
+                        ':tech' => $d['technicianId'] ?? $d['technician_id'] ?? '',
+                        ':data' => $dataAg,
+                        ':hora' => $horaAg,
+                        ':stat' => $statAg,
+                        ':val' => $valAg,
                         ':dados' => $dados_json
                     ]);
                 }
-            } elseif ($tipo_entidade === 'financial' && is_array($d)) {
+            } elseif ($tipo_entidade === 'financial') {
+                $mesRef = $d['month'] ?? $d['mes_referencia'] ?? date('Y-m');
+                $vBruto = (float)($d['grossAmount'] ?? $d['valor_bruto'] ?? 0);
+                $vLiq = (float)($d['netAmount'] ?? $d['valor_liquido'] ?? 0);
+                $vComissao = (float)($d['technicianCommission'] ?? $d['comissao_tecnico'] ?? 0);
+                $statPag = $d['paymentStatus'] ?? $d['status_pagamento'] ?? 'pendente';
+
                 $finStmt = $pdo->prepare("
                     INSERT INTO financeiro_lancamentos (guid, customer_id, technician_id, checklist_id, mes_referencia, valor_bruto, valor_liquido, comissao_tecnico, status_pagamento, dados_json)
                     VALUES (:guid, :cust, :tech, :chk, :mes, :vbruto, :vliq, :comissao, :stat, :dados)
@@ -689,14 +722,14 @@ try {
                 try {
                     $finStmt->execute([
                         ':guid' => $guid,
-                        ':cust' => $d['customerId'] ?? '',
-                        ':tech' => $d['technicianId'] ?? '',
-                        ':chk' => $d['checklistId'] ?? '',
-                        ':mes' => $d['month'] ?? date('Y-m'),
-                        ':vbruto' => (float)($d['grossAmount'] ?? 0),
-                        ':vliq' => (float)($d['netAmount'] ?? 0),
-                        ':comissao' => (float)($d['technicianCommission'] ?? 0),
-                        ':stat' => $d['paymentStatus'] ?? 'pendente',
+                        ':cust' => $d['customerId'] ?? $d['customer_id'] ?? '',
+                        ':tech' => $d['technicianId'] ?? $d['technician_id'] ?? '',
+                        ':chk' => $d['checklistId'] ?? $d['checklist_id'] ?? '',
+                        ':mes' => $mesRef,
+                        ':vbruto' => $vBruto,
+                        ':vliq' => $vLiq,
+                        ':comissao' => $vComissao,
+                        ':stat' => $statPag,
                         ':dados' => $dados_json
                     ]);
                 } catch (Exception $e) {
@@ -705,29 +738,35 @@ try {
                     $insStmt = $pdo->prepare("INSERT INTO financeiro_lancamentos (guid, customer_id, technician_id, checklist_id, mes_referencia, valor_bruto, valor_liquido, comissao_tecnico, status_pagamento, dados_json) VALUES (:guid, :cust, :tech, :chk, :mes, :vbruto, :vliq, :comissao, :stat, :dados)");
                     $insStmt->execute([
                         ':guid' => $guid,
-                        ':cust' => $d['customerId'] ?? '',
-                        ':tech' => $d['technicianId'] ?? '',
-                        ':chk' => $d['checklistId'] ?? '',
-                        ':mes' => $d['month'] ?? date('Y-m'),
-                        ':vbruto' => (float)($d['grossAmount'] ?? 0),
-                        ':vliq' => (float)($d['netAmount'] ?? 0),
-                        ':comissao' => (float)($d['technicianCommission'] ?? 0),
-                        ':stat' => $d['paymentStatus'] ?? 'pendente',
+                        ':cust' => $d['customerId'] ?? $d['customer_id'] ?? '',
+                        ':tech' => $d['technicianId'] ?? $d['technician_id'] ?? '',
+                        ':chk' => $d['checklistId'] ?? $d['checklist_id'] ?? '',
+                        ':mes' => $mesRef,
+                        ':vbruto' => $vBruto,
+                        ':vliq' => $vLiq,
+                        ':comissao' => $vComissao,
+                        ':stat' => $statPag,
                         ':dados' => $dados_json
                     ]);
                 }
-            } elseif ($tipo_entidade === 'audit_log' && is_array($d)) {
+            } elseif ($tipo_entidade === 'audit_log') {
+                $entType = $d['entityType'] ?? $d['entity_type'] ?? 'geral';
+                $entId = $d['entityId'] ?? $d['entity_id'] ?? '';
+                $acao = $d['action'] ?? $d['acao'] ?? 'Edição';
+                $usuario = $d['user'] ?? $d['usuario'] ?? 'Sistema';
+                $resumo = $d['summary'] ?? $d['resumo'] ?? '';
+
                 $audStmt = $pdo->prepare("
                     INSERT INTO auditoria_historico (guid, entity_type, entity_id, acao, usuario, resumo, dados_json)
                     VALUES (:guid, :ent_type, :ent_id, :acao, :usuario, :resumo, :dados)
                 ");
                 $audStmt->execute([
                     ':guid' => $guid,
-                    ':ent_type' => $d['entityType'] ?? 'geral',
-                    ':ent_id' => $d['entityId'] ?? '',
-                    ':acao' => $d['action'] ?? 'Edição',
-                    ':usuario' => $d['user'] ?? 'Sistema',
-                    ':resumo' => $d['summary'] ?? '',
+                    ':ent_type' => $entType,
+                    ':ent_id' => $entId,
+                    ':acao' => $acao,
+                    ':usuario' => $usuario,
+                    ':resumo' => $resumo,
                     ':dados' => $dados_json
                 ]);
             }
@@ -735,12 +774,75 @@ try {
 
         $pdo->commit();
 
+        // Busca registros remotos para sincronização híbrida (Pull)
+        $syncOptions = $payload['sync_options'] ?? [];
+        $limite = min(max((int)($syncOptions['limit'] ?? $payload['limit'] ?? 50), 10), 200);
+        $estrategia = $syncOptions['strategy'] ?? $payload['strategy'] ?? 'hybrid_my_and_recent';
+        
+        $registrosRemotos = [];
+        if ($estrategia === 'my_recent') {
+            $pullStmt = $pdo->prepare("SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em FROM registros_sincronizacao WHERE usuario_id = :uid ORDER BY atualizado_em DESC, id DESC LIMIT :lim");
+            $pullStmt->bindValue(':uid', $usuario_id);
+            $pullStmt->bindValue(':lim', $limite, PDO::PARAM_INT);
+            $pullStmt->execute();
+            $registrosRemotos = $pullStmt->fetchAll(PDO::FETCH_ASSOC);
+        } elseif ($estrategia === 'all_recent') {
+            $pullStmt = $pdo->prepare("SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em FROM registros_sincronizacao ORDER BY atualizado_em DESC, id DESC LIMIT :lim");
+            $pullStmt->bindValue(':lim', $limite, PDO::PARAM_INT);
+            $pullStmt->execute();
+            $registrosRemotos = $pullStmt->fetchAll(PDO::FETCH_ASSOC);
+        } else {
+            // hybrid_my_and_recent
+            $meuLimite = (int)floor($limite / 2);
+            $pullStmt1 = $pdo->prepare("SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em FROM registros_sincronizacao WHERE usuario_id = :uid ORDER BY atualizado_em DESC, id DESC LIMIT :lim");
+            $pullStmt1->bindValue(':uid', $usuario_id);
+            $pullStmt1->bindValue(':lim', $meuLimite, PDO::PARAM_INT);
+            $pullStmt1->execute();
+            $meus = $pullStmt1->fetchAll(PDO::FETCH_ASSOC);
+
+            $pullStmt2 = $pdo->prepare("SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em FROM registros_sincronizacao ORDER BY atualizado_em DESC, id DESC LIMIT :lim");
+            $pullStmt2->bindValue(':lim', $limite, PDO::PARAM_INT);
+            $pullStmt2->execute();
+            $gerais = $pullStmt2->fetchAll(PDO::FETCH_ASSOC);
+
+            $seen = [];
+            foreach ($meus as $m) {
+                $seen[$m['id_banco']] = true;
+                $registrosRemotos[] = $m;
+            }
+            foreach ($gerais as $g) {
+                if (!isset($seen[$g['id_banco']]) && count($registrosRemotos) < $limite) {
+                    $seen[$g['id_banco']] = true;
+                    $registrosRemotos[] = $g;
+                }
+            }
+        }
+
+        $registrosRemotosSanitizados = [];
+        foreach ($registrosRemotos as &$r) {
+            if ($r['guid'] === 'usr-admin-master' || $r['guid'] === 'admin' || $r['tipo_entidade'] === 'master') {
+                continue;
+            }
+            $dados = json_decode($r['dados_json'], true);
+            if (is_array($dados)) {
+                if (isset($dados['id']) && $dados['id'] === 'usr-admin-master') {
+                    continue;
+                }
+                unset($dados['password']);
+                unset($dados['senha']);
+            }
+            $r['dados'] = $dados;
+            $registrosRemotosSanitizados[] = $r;
+        }
+
         echo json_encode([
             'success' => true,
             'message' => 'Lote com Checklists, Cadastros, Agenda, Financeiro e Auditoria consolidado no Banco de Dados.',
             'total_processados' => count($mapeamento),
             'itemsProcessed' => $itens_confirmados,
             'mapeamento' => $mapeamento,
+            'registros_remotos' => $registrosRemotosSanitizados,
+            'total_remotos' => count($registrosRemotosSanitizados),
             'banco_tipo' => $usando_mysql_real ? 'MySQL Real' : 'SQLite Fallback',
             'servidor_timestamp' => date('Y-m-d H:i:s')
         ]);
@@ -758,11 +860,27 @@ try {
             'total_imagens' => (int)$pdo->query("SELECT COUNT(*) FROM imagens_arquivos")->fetchColumn(),
         ];
 
-        $stmt = $pdo->query("SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em FROM registros_sincronizacao ORDER BY id DESC LIMIT 100");
+        $limiteGet = min(max((int)($_GET['limit'] ?? 50), 10), 200);
+        $stmt = $pdo->prepare("SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em FROM registros_sincronizacao ORDER BY id DESC LIMIT :lim");
+        $stmt->bindValue(':lim', $limiteGet, PDO::PARAM_INT);
+        $stmt->execute();
         $registros = $stmt->fetchAll();
 
+        $registrosSanitizados = [];
         foreach ($registros as &$reg) {
-            $reg['dados'] = json_decode($reg['dados_json'], true);
+            if ($reg['guid'] === 'usr-admin-master' || $reg['guid'] === 'admin' || $reg['tipo_entidade'] === 'master') {
+                continue;
+            }
+            $dados = json_decode($reg['dados_json'], true);
+            if (is_array($dados)) {
+                if (isset($dados['id']) && $dados['id'] === 'usr-admin-master') {
+                    continue;
+                }
+                unset($dados['password']);
+                unset($dados['senha']);
+            }
+            $reg['dados'] = $dados;
+            $registrosSanitizados[] = $reg;
         }
 
         echo json_encode([
@@ -771,8 +889,10 @@ try {
             'driver' => $pdo->getAttribute(PDO::ATTR_DRIVER_NAME),
             'usando_mysql_real' => $usando_mysql_real,
             'estatisticas' => $stats,
-            'total' => count($registros),
-            'registros' => $registros,
+            'total' => count($registrosSanitizados),
+            'registros' => $registrosSanitizados,
+            'registros_remotos' => $registrosSanitizados,
+            'total_remotos' => count($registrosSanitizados),
             'servidor_timestamp' => date('Y-m-d H:i:s')
         ]);
         exit;

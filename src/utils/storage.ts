@@ -27,6 +27,7 @@ const STORAGE_KEYS = {
   LAST_SYNC: 'elthera_pro_last_sync',
   AUDIT_LOGS: 'elthera_audit_logs',
   AUTH_SESSION: 'elthera_auth_session',
+  LAST_LOGGED_USER: 'elthera_last_logged_user',
 };
 
 export const ALL_NAV_TABS: { id: NavTabId; label: string; description: string }[] = [
@@ -89,6 +90,9 @@ export const DEFAULT_SETTINGS: CompanySettings = {
   pricePerModule: 25.0,
   minServiceFee: 150.0,
   kwhPriceAverage: 0.90,
+  maxLocalRecordsLimit: 50,
+  syncFilterStrategy: 'hybrid_my_and_recent',
+  autoDownloadRemoteData: true,
 };
 
 // Initial Services - Complete Standard Catalog for Solar Maintenance & Cleaning
@@ -314,6 +318,43 @@ class StorageService {
     this.clearSession();
   }
 
+  public getLastLoggedUser(): {
+    name: string;
+    phone: string;
+    role?: 'admin' | 'technician' | 'client';
+    isTechnician?: boolean;
+    isAdmin?: boolean;
+    isPartner?: boolean;
+  } | null {
+    return this.get<any>(STORAGE_KEYS.LAST_LOGGED_USER, null);
+  }
+
+  public setLastLoggedUser(user: {
+    name: string;
+    phone: string;
+    role?: 'admin' | 'technician' | 'client';
+    isTechnician?: boolean;
+    isAdmin?: boolean;
+    isPartner?: boolean;
+  } | null): void {
+    if (!user) {
+      localStorage.removeItem(STORAGE_KEYS.LAST_LOGGED_USER);
+    } else {
+      this.set(STORAGE_KEYS.LAST_LOGGED_USER, {
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+        isTechnician: Boolean(user.isTechnician),
+        isAdmin: Boolean(user.isAdmin),
+        isPartner: Boolean(user.isPartner),
+      });
+    }
+  }
+
+  public clearLastLoggedUser(): void {
+    localStorage.removeItem(STORAGE_KEYS.LAST_LOGGED_USER);
+  }
+
   public login(phoneOrName: string, passwordInput: string): { success: boolean; session?: AuthSession; message?: string } {
     return this.authenticate(phoneOrName, passwordInput);
   }
@@ -326,8 +367,19 @@ class StorageService {
       (cleanPhoneInput === normalizePhoneNumber(MASTER_ADMIN_USER.phone) || phoneOrName.trim().toLowerCase() === 'admin') &&
       cleanPassword === MASTER_ADMIN_PASSWORD
     ) {
-      const session = { ...MASTER_ADMIN_USER, loginTimestamp: new Date().toISOString() };
+      const session: AuthSession = {
+        ...MASTER_ADMIN_USER,
+        isAdmin: true,
+        isPartner: false,
+        loginTimestamp: new Date().toISOString(),
+      };
       this.setCurrentSession(session);
+      this.setLastLoggedUser({
+        name: 'Administrador Geral',
+        phone: MASTER_ADMIN_USER.phone,
+        role: 'admin',
+        isAdmin: true,
+      });
       this.addAuditLog({
         entityType: 'contact',
         entityId: 'admin',
@@ -366,7 +418,9 @@ class StorageService {
       };
     }
 
-    const defaultTabs: NavTabId[] = matchedContact.isTechnician
+    const defaultTabs: NavTabId[] = matchedContact.isAdmin
+      ? ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']
+      : matchedContact.isTechnician
       ? ['checklist', 'agenda', 'cliente']
       : ['cliente'];
     const allowedTabs = matchedContact.allowedNavTabs && matchedContact.allowedNavTabs.length > 0
@@ -377,20 +431,32 @@ class StorageService {
       id: matchedContact.id,
       name: matchedContact.name,
       phone: matchedContact.phone,
-      role: matchedContact.isTechnician ? 'technician' : 'client',
+      role: matchedContact.isAdmin ? 'admin' : matchedContact.isTechnician ? 'technician' : 'client',
       isTechnician: matchedContact.isTechnician,
+      isAdmin: Boolean(matchedContact.isAdmin),
+      isPartner: Boolean(matchedContact.isPartner),
       contactId: matchedContact.id,
       allowedNavTabs: allowedTabs,
       loginTimestamp: new Date().toISOString(),
     };
 
     this.setCurrentSession(session);
+    // Armazena preview exclusivamente do último usuário logado (sem senha)
+    this.setLastLoggedUser({
+      name: matchedContact.name,
+      phone: matchedContact.phone,
+      role: session.role,
+      isTechnician: matchedContact.isTechnician,
+      isAdmin: matchedContact.isAdmin,
+      isPartner: matchedContact.isPartner,
+    });
+
     this.addAuditLog({
       entityType: 'contact',
       entityId: matchedContact.id,
       action: 'Edição',
       user: matchedContact.name,
-      summary: `Login realizado por ${matchedContact.isTechnician ? 'Técnico' : 'Cliente'} "${matchedContact.name}"`,
+      summary: `Login realizado por ${matchedContact.isAdmin ? 'Administrador' : matchedContact.isTechnician ? 'Técnico' : 'Cliente'} "${matchedContact.name}"`,
     });
 
     return { success: true, session };
@@ -438,14 +504,6 @@ class StorageService {
 
   public getContactById(id: string): Contact | undefined {
     return this.getContacts().find((c) => c.id === id);
-  }
-
-  public setContacts(contacts: Contact[]): void {
-    this.set(STORAGE_KEYS.CONTACTS, contacts);
-  }
-
-  public setChecklists(checklists: TechnicalChecklist[]): void {
-    this.set(STORAGE_KEYS.CHECKLISTS, checklists);
   }
 
   public saveContact(contact: Contact, user?: string): Contact {
@@ -499,6 +557,22 @@ class StorageService {
     this.addToSyncQueue({ type: 'contact', action: 'save', data: updatedContact });
 
     return updatedContact;
+  }
+
+  public setContacts(contacts: Contact[]): void {
+    this.set(STORAGE_KEYS.CONTACTS, contacts);
+  }
+
+  public setChecklists(checklists: TechnicalChecklist[]): void {
+    this.set(STORAGE_KEYS.CHECKLISTS, checklists);
+  }
+
+  public setAppointments(appointments: Appointment[]): void {
+    this.set(STORAGE_KEYS.APPOINTMENTS, appointments);
+  }
+
+  public setFinancials(records: FinancialRecord[]): void {
+    this.set(STORAGE_KEYS.FINANCIALS, records);
   }
 
   public deleteContact(id: string, user?: string, reason?: string): void {
@@ -984,6 +1058,15 @@ class StorageService {
     }
     if (!s.googleSheetId || s.googleSheetId === 'Elthera_Controle_Financeiro_2026') {
       s.googleSheetId = '1cxPXrEv4TInyNjRK_GQs8-TQ5wzesG9Ho0gv8j5-w-A';
+    }
+    if (!s.maxLocalRecordsLimit) {
+      s.maxLocalRecordsLimit = DEFAULT_SETTINGS.maxLocalRecordsLimit || 50;
+    }
+    if (!s.syncFilterStrategy) {
+      s.syncFilterStrategy = DEFAULT_SETTINGS.syncFilterStrategy || 'hybrid_my_and_recent';
+    }
+    if (s.autoDownloadRemoteData === undefined) {
+      s.autoDownloadRemoteData = true;
     }
     return s;
   }

@@ -33,6 +33,8 @@ import {
   AlertCircle,
   LogIn,
   Settings,
+  Cloud,
+  HardDrive,
 } from 'lucide-react';
 import { Contact, Address, SolarSystemInfo, TechnicianDetails, NavTabId } from '../types';
 import { storage, ALL_NAV_TABS, generateAlphanumericPassword, exportContactsToCsv } from '../utils/storage';
@@ -45,7 +47,7 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
   onSelectCustomerForDashboard,
 }) => {
   const [contacts, setContacts] = useState<Contact[]>(storage.getContacts());
-  const [activeTab, setActiveTab] = useState<'all' | 'clients' | 'technicians'>('clients');
+  const [activeTab, setActiveTab] = useState<'all' | 'clients' | 'technicians' | 'online_synced' | 'offline_local'>('clients');
   const [searchQuery, setSearchQuery] = useState('');
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -77,6 +79,8 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
   // Form State
   const [name, setName] = useState('');
   const [isTechnician, setIsTechnician] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isPartner, setIsPartner] = useState(false);
   const [personType, setPersonType] = useState<'PF' | 'PJ'>('PF');
   const [document, setDocument] = useState('');
   const [email, setEmail] = useState('');
@@ -123,6 +127,8 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
     setEditingContact(null);
     setName('');
     setIsTechnician(defaultTech);
+    setIsAdmin(false);
+    setIsPartner(false);
     setPersonType('PF');
     setDocument('');
     setEmail('');
@@ -162,6 +168,8 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
     setEditingContact(contact);
     setName(contact.name);
     setIsTechnician(contact.isTechnician);
+    setIsAdmin(Boolean(contact.isAdmin));
+    setIsPartner(Boolean(contact.isPartner));
     setPersonType(contact.personType);
     setDocument(contact.document || '');
     setEmail(contact.email || '');
@@ -274,6 +282,8 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
       id: editingContact ? editingContact.id : `ct-${Date.now()}`,
       name,
       isTechnician,
+      isAdmin,
+      isPartner,
       personType,
       document,
       email,
@@ -297,7 +307,13 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
   };
 
   const filteredContacts = contacts.filter((c) => {
-    const matchTab = activeTab === 'all' || (activeTab === 'clients' ? !c.isTechnician : c.isTechnician);
+    let matchTab = true;
+    if (activeTab === 'clients') matchTab = !c.isTechnician;
+    else if (activeTab === 'technicians') matchTab = c.isTechnician;
+    else if (activeTab === 'online_synced') matchTab = Boolean(c.id_banco || c.sincronizado);
+    else if (activeTab === 'offline_local') matchTab = !c.id_banco && !c.sincronizado;
+    else if (activeTab === 'all') matchTab = true;
+
     const matchSearch = searchQuery === '' ||
       c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.phone.includes(searchQuery) ||
@@ -393,17 +409,19 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
       </div>
 
       {/* Tabs & Search */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
-        <div className="flex items-center space-x-1.5 w-full sm:w-auto">
+      <div className="flex flex-col lg:flex-row items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
+        <div className="flex flex-wrap items-center gap-1.5 w-full lg:w-auto">
           {[
             { id: 'clients', label: `Clientes (${contacts.filter((c) => !c.isTechnician).length})` },
             { id: 'technicians', label: `Técnicos (${contacts.filter((c) => c.isTechnician).length})` },
             { id: 'all', label: `Todos (${contacts.length})` },
+            { id: 'online_synced', label: `Nuvem / Sync (${contacts.filter((c) => c.id_banco || c.sincronizado).length})` },
+            { id: 'offline_local', label: `Locais (${contacts.filter((c) => !c.id_banco && !c.sincronizado).length})` },
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                 activeTab === tab.id
                   ? 'bg-slate-900 text-white shadow-xs'
                   : 'text-slate-600 hover:bg-slate-100'
@@ -414,7 +432,7 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
           ))}
         </div>
 
-        <div className="relative w-full sm:w-72">
+        <div className="relative w-full lg:w-72">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
           <input
             type="text"
@@ -435,20 +453,43 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
           >
             {/* Header */}
             <div>
-              <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between gap-2">
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm tracking-tight">{contact.name}</h3>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h3 className="font-bold text-slate-900 text-sm tracking-tight">{contact.name}</h3>
+                    {contact.id_banco || contact.sincronizado ? (
+                      <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title={`Sincronizado na Nuvem (ID: ${contact.id_banco || 'OK'})`}>
+                        <Cloud className="w-2.5 h-2.5" /> Nuvem
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-amber-50 text-amber-700 border border-amber-200" title="Salvo apenas no dispositivo local">
+                        <HardDrive className="w-2.5 h-2.5" /> Local
+                      </span>
+                    )}
+                  </div>
                   <span className="text-[11px] text-slate-400">{contact.document || 'Documento não informado'}</span>
                 </div>
-                <span
-                  className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase ${
-                    contact.isTechnician
-                      ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                      : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  }`}
-                >
-                  {contact.isTechnician ? 'Técnico' : 'Cliente'}
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                  {contact.isAdmin && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-50 text-purple-800 border border-purple-200">
+                      ADM
+                    </span>
+                  )}
+                  {contact.isPartner && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-sky-50 text-sky-800 border border-sky-200">
+                      Parceiro
+                    </span>
+                  )}
+                  <span
+                    className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase ${
+                      contact.isTechnician
+                        ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                        : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    }`}
+                  >
+                    {contact.isTechnician ? 'Técnico' : 'Cliente'}
+                  </span>
+                </div>
               </div>
 
               {/* Contact Info */}
@@ -992,6 +1033,50 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
                       </span>
                     </div>
                   </div>
+                </div>
+                {/* Access Class Flags (Admin & Partner Checkboxes) */}
+                <div className="p-3 bg-slate-50/70 rounded-2xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <label className="flex items-start gap-2.5 p-2 bg-white rounded-xl border border-slate-200 hover:border-purple-300 cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={isAdmin}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setIsAdmin(checked);
+                        if (checked) {
+                          setAllowedNavTabs(['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']);
+                        }
+                      }}
+                      className="mt-0.5 rounded text-purple-600 focus:ring-purple-500 w-4 h-4"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-slate-900 text-xs">Usuário Administrador (ADM)</span>
+                        <span className="text-[9px] px-1 bg-purple-100 text-purple-800 rounded font-bold">Privilegiado</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 block leading-tight mt-0.5">
+                        Permite gerenciar e alterar configurações da empresa, tabelas de serviços e sincronização.
+                      </span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 p-2 bg-white rounded-xl border border-slate-200 hover:border-sky-300 cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={isPartner}
+                      onChange={(e) => setIsPartner(e.target.checked)}
+                      className="mt-0.5 rounded text-sky-600 focus:ring-sky-500 w-4 h-4"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-slate-900 text-xs">Parceiro / Integrador</span>
+                        <span className="text-[9px] px-1 bg-sky-100 text-sky-800 rounded font-bold">Informativo</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 block leading-tight mt-0.5">
+                        Marcação informativa de integrador parceiro (sem privilégios administrativos adicionais).
+                      </span>
+                    </div>
+                  </label>
                 </div>
 
                 {/* Navbar Multi-selection Section */}

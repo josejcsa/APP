@@ -327,8 +327,21 @@ export async function syncBatchData(items: any[], usuarioId: number = 1): Promis
       if (!guid) continue;
 
       const tipo_entidade = item.tipo_entidade || item.type || 'geral';
-      const dados = item.dados || item.data || item;
-      const dados_json = JSON.stringify(dados);
+      
+      // Decodifica dados do item se vier como dados_json ou dados
+      let dados: any = item.dados || item.data;
+      if (!dados && item.dados_json) {
+        try {
+          dados = typeof item.dados_json === 'string' ? JSON.parse(item.dados_json) : item.dados_json;
+        } catch (e) {
+          dados = null;
+        }
+      }
+      if (!dados || typeof dados !== 'object') {
+        dados = item;
+      }
+      
+      const dados_json = typeof item.dados_json === 'string' ? item.dados_json : JSON.stringify(dados);
       const itemUsuarioId = item.usuario_id || usuarioId;
 
       try {
@@ -336,75 +349,79 @@ export async function syncBatchData(items: any[], usuarioId: number = 1): Promis
         await connection.query(
           `INSERT INTO registros_sincronizacao (guid, tipo_entidade, usuario_id, dados_json)
            VALUES (?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE dados_json = VALUES(dados_json), atualizado_em = CURRENT_TIMESTAMP`,
+           ON DUPLICATE KEY UPDATE dados_json = VALUES(dados_json), tipo_entidade = VALUES(tipo_entidade), atualizado_em = CURRENT_TIMESTAMP`,
           [guid, tipo_entidade, itemUsuarioId, dados_json]
         );
 
         // 2. Insere em tabela especializada conforme tipo
-        if (tipo_entidade === 'checklist' && dados.protocolNumber) {
+        if (tipo_entidade === 'checklist') {
+          const proto = dados.protocolNumber || dados.protocolo || `SOL-${Date.now().toString().slice(-6)}`;
           await connection.query(
             `INSERT INTO checklists_laudos (guid, protocol_number, customer_id, technician_id, status, service_value, dados_json)
              VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE protocol_number = VALUES(protocol_number), dados_json = VALUES(dados_json)`,
+             ON DUPLICATE KEY UPDATE protocol_number = VALUES(protocol_number), customer_id = VALUES(customer_id), technician_id = VALUES(technician_id), status = VALUES(status), service_value = VALUES(service_value), dados_json = VALUES(dados_json)`,
             [
               guid,
-              dados.protocolNumber || 'SOL-AUTO',
-              dados.customerId || null,
-              dados.technicianId || null,
+              proto,
+              dados.customerId || dados.customer_id || null,
+              dados.technicianId || dados.technician_id || null,
               dados.status || 'rascunho',
-              dados.serviceValue || 0,
+              Number(dados.serviceValue || dados.valor_servico || 0),
               dados_json
             ]
           );
-        } else if (tipo_entidade === 'contact' && dados.name) {
-          const tipoContato = dados.isTechnician ? 'tecnico' : 'cliente';
+        } else if (tipo_entidade === 'contact') {
+          const nome = dados.name || dados.nome || 'Contato Sem Nome';
+          const tipoContato = (dados.isTechnician || dados.tipo === 'tecnico') ? 'tecnico' : 'cliente';
           await connection.query(
             `INSERT INTO cadastros_contatos (guid, tipo, nome, documento, telefone, email, cidade, uf, dados_json)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE tipo = VALUES(tipo), nome = VALUES(nome), dados_json = VALUES(dados_json)`,
+             ON DUPLICATE KEY UPDATE tipo = VALUES(tipo), nome = VALUES(nome), documento = VALUES(documento), telefone = VALUES(telefone), email = VALUES(email), cidade = VALUES(cidade), uf = VALUES(uf), dados_json = VALUES(dados_json)`,
             [
               guid,
               tipoContato,
-              dados.name,
-              dados.document || null,
-              dados.phone || null,
+              nome,
+              dados.document || dados.documento || null,
+              dados.phone || dados.telefone || null,
               dados.email || null,
-              dados.address?.city || null,
-              dados.address?.state || null,
+              dados.address?.city || dados.cidade || null,
+              dados.address?.state || dados.uf || null,
               dados_json
             ]
           );
-        } else if (tipo_entidade === 'appointment' && dados.scheduledDate) {
+        } else if (tipo_entidade === 'appointment') {
+          const dataAg = dados.scheduledDate || dados.data_agendamento || new Date().toISOString().slice(0, 10);
           await connection.query(
             `INSERT INTO agendamentos_ordens (guid, customer_id, technician_id, data_agendamento, hora_agendamento, status, valor_total, dados_json)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE customer_id = VALUES(customer_id), dados_json = VALUES(dados_json)`,
+             ON DUPLICATE KEY UPDATE customer_id = VALUES(customer_id), technician_id = VALUES(technician_id), data_agendamento = VALUES(data_agendamento), hora_agendamento = VALUES(hora_agendamento), status = VALUES(status), valor_total = VALUES(valor_total), dados_json = VALUES(dados_json)`,
             [
               guid,
-              dados.customerId || null,
-              dados.technicianId || null,
-              dados.scheduledDate,
-              dados.scheduledTime || null,
+              dados.customerId || dados.customer_id || null,
+              dados.technicianId || dados.technician_id || null,
+              dataAg,
+              dados.scheduledTime || dados.hora_agendamento || null,
               dados.status || 'agendado',
-              dados.totalAmount || 0,
+              Number(dados.totalAmount || dados.valor_total || 0),
               dados_json
             ]
           );
-        } else if (tipo_entidade === 'financial' && dados.month) {
+        } else if (tipo_entidade === 'financial') {
+          const mes = dados.month || dados.mes_referencia || new Date().toISOString().slice(0, 7);
           await connection.query(
             `INSERT INTO financeiro_lancamentos (guid, customer_id, technician_id, checklist_id, mes_referencia, valor_bruto, valor_liquido, comissao_tecnico, status_pagamento, dados_json)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE valor_bruto = VALUES(valor_bruto), dados_json = VALUES(dados_json)`,
+             ON DUPLICATE KEY UPDATE customer_id = VALUES(customer_id), technician_id = VALUES(technician_id), checklist_id = VALUES(checklist_id), mes_referencia = VALUES(mes_referencia), valor_bruto = VALUES(valor_bruto), valor_liquido = VALUES(valor_liquido), comissao_tecnico = VALUES(comissao_tecnico), status_pagamento = VALUES(status_pagamento), dados_json = VALUES(dados_json)`,
             [
               guid,
-              dados.customerId || null,
-              dados.technicianId || null,
-              dados.checklistId || null,
-              dados.month,
-              dados.grossAmount || 0,
-              dados.netAmount || 0,
-              dados.technicianCommission || 0,
-              dados.paymentStatus || 'pendente',
+              dados.customerId || dados.customer_id || null,
+              dados.technicianId || dados.technician_id || null,
+              dados.checklistId || dados.checklist_id || null,
+              mes,
+              Number(dados.grossAmount || dados.valor_bruto || 0),
+              Number(dados.netAmount || dados.valor_liquido || 0),
+              Number(dados.technicianCommission || dados.comissao_tecnico || 0),
+              dados.paymentStatus || dados.status_pagamento || 'pendente',
               dados_json
             ]
           );
@@ -414,11 +431,11 @@ export async function syncBatchData(items: any[], usuarioId: number = 1): Promis
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
               guid,
-              dados.entityType || 'geral',
-              dados.entityId || '',
-              dados.action || 'Edição',
-              dados.user || 'Sistema',
-              dados.summary || '',
+              dados.entityType || dados.entity_type || 'geral',
+              dados.entityId || dados.entity_id || '',
+              dados.action || dados.acao || 'Edição',
+              dados.user || dados.usuario || 'Sistema',
+              dados.summary || dados.resumo || '',
               dados_json
             ]
           );
@@ -523,6 +540,137 @@ export async function getTableCounts(): Promise<{
 }
 
 /**
+ * ===== NOVO: Buscar registros remotos para sincronização híbrida (Pull) =====
+ */
+export async function fetchRemoteSyncRecords(options: {
+  limit?: number;
+  strategy?: 'all_recent' | 'my_recent' | 'hybrid_my_and_recent';
+  userId?: string | number;
+  since?: string;
+}): Promise<Array<{
+  id_banco: number;
+  guid: string;
+  tipo_entidade: string;
+  usuario_id: any;
+  dados: any;
+  atualizado_em: string;
+}>> {
+  try {
+    const limit = Math.min(Math.max(Number(options.limit) || 50, 10), 200);
+    const strategy = options.strategy || 'hybrid_my_and_recent';
+    const userId = options.userId || 1;
+    const pool = getDatabasePool();
+    const connection = await pool.getConnection();
+
+    let rows: any[] = [];
+
+    if (strategy === 'my_recent') {
+      const [results]: any = await connection.query(
+        `SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em 
+         FROM registros_sincronizacao 
+         WHERE usuario_id = ? 
+         ORDER BY atualizado_em DESC, id DESC 
+         LIMIT ?`,
+        [userId, limit]
+      );
+      rows = results || [];
+    } else if (strategy === 'all_recent') {
+      const [results]: any = await connection.query(
+        `SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em 
+         FROM registros_sincronizacao 
+         ORDER BY atualizado_em DESC, id DESC 
+         LIMIT ?`,
+        [limit]
+      );
+      rows = results || [];
+    } else {
+      // hybrid_my_and_recent: Meus registros + mais recentes gerais
+      const myLimit = Math.floor(limit / 2);
+
+      const [myResults]: any = await connection.query(
+        `SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em 
+         FROM registros_sincronizacao 
+         WHERE usuario_id = ? 
+         ORDER BY atualizado_em DESC, id DESC 
+         LIMIT ?`,
+        [userId, myLimit]
+      );
+
+      const [allResults]: any = await connection.query(
+        `SELECT id as id_banco, guid, tipo_entidade, usuario_id, dados_json, atualizado_em 
+         FROM registros_sincronizacao 
+         ORDER BY atualizado_em DESC, id DESC 
+         LIMIT ?`,
+        [limit]
+      );
+
+      const seen = new Set<number>();
+      const combined: any[] = [];
+
+      for (const r of (myResults || [])) {
+        if (!seen.has(r.id_banco)) {
+          seen.add(r.id_banco);
+          combined.push(r);
+        }
+      }
+
+      for (const r of (allResults || [])) {
+        if (!seen.has(r.id_banco) && combined.length < limit) {
+          seen.add(r.id_banco);
+          combined.push(r);
+        }
+      }
+
+      rows = combined;
+    }
+
+    connection.release();
+
+    const sanitizedRows: any[] = [];
+    for (const r of rows) {
+      // Ignora master admin
+      if (
+        r.guid === 'usr-admin-master' ||
+        r.guid === 'admin' ||
+        r.tipo_entidade === 'master'
+      ) {
+        continue;
+      }
+
+      let parsed: any = null;
+      try {
+        parsed = typeof r.dados_json === 'string' ? JSON.parse(r.dados_json) : r.dados_json;
+      } catch (e) {
+        parsed = {};
+      }
+
+      // Se for contato ou tiver senha, sanitiza o campo
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.id === 'usr-admin-master' || parsed.phone === '(47)98863-8516' || parsed.phone === '(47) 98863-8516') {
+          continue;
+        }
+        delete parsed.password;
+        delete parsed.senha;
+      }
+
+      sanitizedRows.push({
+        id_banco: r.id_banco,
+        guid: r.guid,
+        tipo_entidade: r.tipo_entidade,
+        usuario_id: r.usuario_id,
+        dados: parsed,
+        atualizado_em: r.atualizado_em
+      });
+    }
+
+    return sanitizedRows;
+  } catch (error) {
+    console.error('❌ Erro ao buscar registros remotos:', error);
+    return [];
+  }
+}
+
+/**
  * Close all database connections gracefully
  * Call this during server shutdown
  */
@@ -538,4 +686,4 @@ export async function closeDatabaseConnections(): Promise<void> {
   }
 }
 
-export default { getDatabasePool, testDatabaseConnection, getDatabaseStats, closeDatabaseConnections, initializeDatabaseTables, syncBatchData, getTableCounts };
+export default { getDatabasePool, testDatabaseConnection, getDatabaseStats, closeDatabaseConnections, initializeDatabaseTables, syncBatchData, getTableCounts, fetchRemoteSyncRecords };

@@ -439,6 +439,147 @@ try {
             exit;
         }
 
+        // ===== NOVO: Endpoint de Login e Autenticação no PHP / MySQL =====
+        if ((isset($_GET['action']) && $_GET['action'] === 'login') || (isset($payload['action']) && $payload['action'] === 'login') || isset($payload['phone']) || isset($payload['telefone'])) {
+            $inputPhone = $payload['phone'] ?? $payload['telefone'] ?? $payload['login'] ?? '';
+            $inputPass  = $payload['password'] ?? $payload['senha'] ?? '';
+            $cleanPhone = preg_replace('/\D/', '', $inputPhone);
+            $cleanPass  = trim($inputPass);
+
+            // 1. Verificação do Usuário Master / Administrador Geral (Exclusivo do Servidor)
+            $masterPhoneClean = '47988638516';
+            $masterPassword = getenv('ADMIN_PASSWORD') ?: 'ELT2026A';
+
+            if (($cleanPhone === $masterPhoneClean || strtolower($inputPhone) === 'admin' || $inputPhone === '(47) 98863-8516' || $inputPhone === '(47)98863-8516') && $cleanPass === $masterPassword) {
+                $session = [
+                    'id' => 'usr-admin-master',
+                    'name' => 'Administrador Geral Elthera',
+                    'phone' => '(47) 98863-8516',
+                    'role' => 'admin',
+                    'isAdmin' => true,
+                    'isPartner' => false,
+                    'isTechnician' => false,
+                    'allowedNavTabs' => ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos'],
+                    'loginTimestamp' => date('c'),
+                    'token' => 'auth_php_master_' . bin2hex(random_bytes(8))
+                ];
+
+                echo json_encode([
+                    'success' => true,
+                    'message' => 'Autenticado com privilégios de Administrador Geral.',
+                    'session' => $session,
+                    'banco_tipo' => $usando_mysql_real ? 'MySQL Real' : 'SQLite Fallback'
+                ]);
+                exit;
+            }
+
+            // 2. Consulta no Banco de Dados (cadastros_contatos ou registros_sincronizacao)
+            $matchedContact = null;
+            $contactData = null;
+
+            try {
+                $stmt = $pdo->prepare("SELECT guid, tipo, nome, documento, telefone, email, dados_json FROM cadastros_contatos WHERE telefone LIKE :phone OR telefone = :rawPhone LIMIT 10");
+                $stmt->execute([
+                    ':phone' => '%' . substr($cleanPhone, -8),
+                    ':rawPhone' => $inputPhone
+                ]);
+                $contatos = $stmt->fetchAll();
+
+                foreach ($contatos as $c) {
+                    $dados = json_decode($c['dados_json'], true) ?: [];
+                    $phoneClean = preg_replace('/\D/', '', $c['telefone'] ?: ($dados['phone'] ?? ''));
+                    if ($phoneClean === $cleanPhone || (strlen($cleanPhone) >= 8 && substr($phoneClean, -8) === substr($cleanPhone, -8))) {
+                        $matchedContact = $c;
+                        $contactData = $dados;
+                        break;
+                    }
+                }
+
+                if (!$matchedContact) {
+                    $stmtSync = $pdo->prepare("SELECT guid, dados_json FROM registros_sincronizacao WHERE tipo_entidade = 'contact' ORDER BY id DESC LIMIT 100");
+                    $stmtSync->execute();
+                    $syncRows = $stmtSync->fetchAll();
+                    foreach ($syncRows as $sr) {
+                        $dados = json_decode($sr['dados_json'], true) ?: [];
+                        $phoneClean = preg_replace('/\D/', '', $dados['phone'] ?? $dados['telefone'] ?? '');
+                        if ($phoneClean === $cleanPhone || (strlen($cleanPhone) >= 8 && substr($phoneClean, -8) === substr($cleanPhone, -8))) {
+                            $matchedContact = ['guid' => $sr['guid'], 'nome' => $dados['name'] ?? 'Contato', 'telefone' => $dados['phone'] ?? $cleanPhone];
+                            $contactData = $dados;
+                            break;
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                // Erro de consulta
+            }
+
+            if (!$matchedContact) {
+                http_response_code(401);
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'Telefone não localizado no cadastro. Verifique o número informado ou contate o administrador.'
+                ]);
+                exit;
+            }
+
+            $contactPassword = $contactData['password'] ?? $matchedContact['password'] ?? '';
+            if (empty($contactPassword)) {
+                http_response_code(401);
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'Este usuário ainda não possui senha cadastrada. Solicite o cadastro de senha ao administrador.'
+                ]);
+                exit;
+            }
+
+            if ($contactPassword !== $cleanPass) {
+                http_response_code(401);
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'Senha incorreta. A senha é composta por 8 dígitos alfanuméricos.'
+                ]);
+                exit;
+            }
+
+            $isAdmin = !empty($contactData['isAdmin']) || !empty($matchedContact['isAdmin']);
+            $isPartner = !empty($contactData['isPartner']) || !empty($matchedContact['isPartner']);
+            $isTechnician = !empty($contactData['isTechnician']) || ($matchedContact['tipo'] ?? '') === 'tecnico';
+
+            $defaultTabs = $isAdmin 
+                ? ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']
+                : ($isTechnician ? ['checklist', 'agenda', 'cliente'] : ['cliente']);
+
+            $allowedTabs = $isAdmin
+                ? ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']
+                : ((!empty($contactData['allowedNavTabs']) && is_array($contactData['allowedNavTabs']))
+                    ? $contactData['allowedNavTabs']
+                    : $defaultTabs);
+
+            $role = $isAdmin ? 'admin' : ($isTechnician ? 'technician' : 'client');
+
+            $session = [
+                'id' => $matchedContact['guid'] ?? $matchedContact['id'] ?? ('usr_' . time()),
+                'name' => $contactData['name'] ?? $matchedContact['nome'] ?? 'Usuário Cadastrado',
+                'phone' => $contactData['phone'] ?? $matchedContact['telefone'] ?? $inputPhone,
+                'role' => $role,
+                'isTechnician' => $isTechnician,
+                'isAdmin' => $isAdmin,
+                'isPartner' => $isPartner,
+                'contactId' => $matchedContact['guid'] ?? $matchedContact['id'] ?? null,
+                'allowedNavTabs' => $allowedTabs,
+                'loginTimestamp' => date('c'),
+                'token' => 'auth_php_' . bin2hex(random_bytes(8))
+            ];
+
+            echo json_encode([
+                'success' => true,
+                'message' => 'Login realizado com sucesso via banco de dados!',
+                'session' => $session,
+                'banco_tipo' => $usando_mysql_real ? 'MySQL Real' : 'SQLite Fallback'
+            ]);
+            exit;
+        }
+
         // Suporte a upload de imagem em formato Base64 via JSON
         if (isset($payload['action']) && $payload['action'] === 'upload_image' && !empty($payload['imagem_base64'])) {
             $base64 = $payload['imagem_base64'];

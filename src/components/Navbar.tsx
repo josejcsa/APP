@@ -57,11 +57,15 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   // Filter nav items based on user session permissions (allowedNavTabs)
   const navItems = allNavItems.filter((item) => {
-    if (!session || !session.allowedNavTabs || session.allowedNavTabs.length === 0) {
-      return true;
+    if (!session) return true;
+    if (session.isAdmin) return true; // ADM tem acesso irrestrito a todas as abas
+    if (!session.allowedNavTabs || session.allowedNavTabs.length === 0) {
+      return session.isTechnician ? ['checklist', 'agenda', 'cliente'].includes(item.id) : item.id === 'cliente';
     }
     return session.allowedNavTabs.includes(item.id);
   });
+
+  const isClientUser = Boolean(session && !session.isAdmin && !session.isTechnician);
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
@@ -70,7 +74,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Logo & Brand */}
           <div
             className="flex items-center space-x-3 cursor-pointer group"
-            onClick={() => onSelectTab('geral')}
+            onClick={() => onSelectTab(session?.isAdmin ? 'geral' : navItems[0]?.id || 'cliente')}
           >
             {settings.logoUrl && !logoError ? (
               <img
@@ -132,8 +136,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center space-x-2">
             <SyncStatusBadge />
 
-            {/* Audit Log Button */}
-            {onOpenAuditLog && (
+            {/* Audit Log Button (Admins e Técnicos) */}
+            {onOpenAuditLog && !isClientUser && (
               <button
                 type="button"
                 id="btn-open-audit-log"
@@ -162,26 +166,28 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
-            {/* Settings */}
-            <button
-              type="button"
-              id="btn-open-settings-modal"
-              onClick={onOpenSettings}
-              className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors border border-transparent hover:border-slate-200"
-              title="Configurações & Google Workspace"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
+            {/* Settings (Admins e Técnicos) */}
+            {!isClientUser && (
+              <button
+                type="button"
+                id="btn-open-settings-modal"
+                onClick={onOpenSettings}
+                className="p-2 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors border border-transparent hover:border-slate-200"
+                title="Configurações & Google Workspace"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            )}
 
             {/* Logged-in User Profile & Logout */}
             {session && (
               <div className="flex items-center space-x-1 pl-2 border-l border-slate-200">
                 <div className="hidden md:flex flex-col text-right">
-                  <span className="text-xs font-bold text-slate-900 leading-tight max-w-[120px] truncate">
+                  <span className="text-xs font-bold text-slate-900 leading-tight max-w-[130px] truncate">
                     {session.name}
                   </span>
-                  <span className="text-[10px] text-amber-700 font-semibold uppercase">
-                    {session.role === 'admin' ? 'Master' : session.isTechnician ? 'Técnico' : 'Cliente'}
+                  <span className={`text-[10px] font-bold uppercase ${session.isAdmin ? 'text-purple-700 font-black' : session.isTechnician ? 'text-blue-700' : 'text-emerald-700'}`}>
+                    {session.isAdmin ? 'Administrador (ADM)' : session.isTechnician ? 'Técnico' : 'Cliente'}
                   </span>
                 </div>
 

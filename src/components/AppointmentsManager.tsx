@@ -27,6 +27,7 @@ import {
 import { Appointment, Contact, SolarServiceItem, TechnicalChecklist } from '../types';
 import { storage } from '../utils/storage';
 import { notificationService } from '../utils/notifications';
+import { formatCurrency, formatNumberBRL } from '../utils/formatters';
 
 interface AppointmentsManagerProps {
   onStartChecklist: (appointmentId: string, customerId: string) => void;
@@ -211,7 +212,7 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
       `Cliente: ${customer?.name}\n` +
       `Endereço: ${customer?.address?.street}, ${customer?.address?.number} - ${customer?.address?.city}\n` +
       `Técnico Responsável: ${technician?.name} (${technician?.email || ''})\n` +
-      `Valor: R$ ${apt.totalAmount.toFixed(2)}\n` +
+      `Valor: ${formatCurrency(apt.totalAmount)}\n` +
       `Observações: ${apt.notes || 'Nenhuma'}`
     );
     const location = encodeURIComponent(customer?.address ? `${customer.address.street}, ${customer.address.number} - ${customer.address.city}/${customer.address.state}` : 'Brasil');
@@ -447,7 +448,7 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                     </p>
                   )}
                   <p className="text-[11px] text-slate-900 font-bold pt-1 border-t border-slate-200">
-                    Valor Estimado: <span className="text-emerald-600">R$ {apt.totalAmount.toFixed(2)}</span>
+                    Valor Estimado: <span className="text-emerald-600">{formatCurrency(apt.totalAmount)}</span>
                   </p>
                 </div>
 

@@ -160,13 +160,19 @@ export interface ChecklistBefore {
   initialNotes?: string;
 }
 
+export interface SelectedExpenseItem {
+  id: string;
+  included: boolean; // se true = incluso no valor do serviço, se false = cobrado à parte
+  quantity?: number; // quantidade utilizada do insumo
+}
+
 export interface ChecklistProcedure {
   waterSource: 'rede_tratada' | 'deionizada' | 'osmo_reversa' | 'filtrada';
   cleaningMethod: 'baixa_pressao' | 'escova_rotativa_solar' | 'escova_telescopica_macia' | 'robo_limpeza';
   cleaningProductUsed: 'apenas_agua_pura' | 'detergente_neutro_solar' | 'desincrustante_biodegradavel' | 'nanotecnologia_hidrofobica';
   modulesCleanedCount: number;
   servicesExecuted: string[];
-  selectedExpenses?: Array<{ id: string; included: boolean }>;
+  selectedExpenses?: Array<{ id: string; included: boolean; quantity?: number }>;
 }
 
 export interface ChecklistAfter {

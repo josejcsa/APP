@@ -3,6 +3,7 @@ import { Download, Share2, Printer, X, CheckCircle2, Zap, Calendar, User, Shield
 import { TechnicalChecklist, Contact } from '../types';
 import { storage } from '../utils/storage';
 import { SolarPdfGenerator } from '../utils/pdfGenerator';
+import { formatCurrency, formatNumberBRL, formatPowerKw, formatPercentGain } from '../utils/formatters';
 
 interface PdfReportModalProps {
   checklist: TechnicalChecklist | null;
@@ -50,10 +51,10 @@ export const PdfReportModal: React.FC<PdfReportModalProps> = ({
       `Olá, ${customer.name}! ☀️\n\n` +
       `Seu *Relatório Técnico de Limpeza Solar* está pronto!\n` +
       `📄 *Protocolo:* ${checklist.protocolNumber}\n` +
-      `⚡ *Potência Antes:* ${checklist.before.readingKwBefore.toFixed(2)} kW\n` +
-      `🚀 *Potência Depois:* ${checklist.after.readingKwAfter.toFixed(2)} kW\n` +
-      `📈 *Ganho de Eficiência:* +${gainPercent.toFixed(1)}%\n` +
-      `💰 *Economia Estimada:* +R$ ${checklist.after.estimatedMonthlySavingsBrl?.toFixed(2) || '0.00'}/mês\n\n` +
+      `⚡ *Potência Antes:* ${formatPowerKw(checklist.before.readingKwBefore)} kW\n` +
+      `🚀 *Potência Depois:* ${formatPowerKw(checklist.after.readingKwAfter)} kW\n` +
+      `📈 *Ganho de Eficiência:* ${formatPercentGain(gainPercent)}\n` +
+      `💰 *Economia Estimada:* +${formatCurrency(checklist.after.estimatedMonthlySavingsBrl || Math.round(gainPercent * 7.5))}/mês\n\n` +
       `Obrigado por confiar na ${settings.tradingName}! O laudo técnico em PDF com as assinaturas digitais foi gerado com sucesso.`
     );
     window.open(`https://api.whatsapp.com/send?phone=55${phoneClean}&text=${message}`, '_blank');
@@ -252,10 +253,10 @@ export const PdfReportDocument: React.FC<{ checklist: TechnicalChecklist }> = ({
             <span className="text-[11px] text-amber-400 font-bold uppercase tracking-wider">Recuperação de Geração de Energia</span>
             <div className="flex items-center space-x-3 mt-1.5">
               <span className="text-2xl sm:text-3xl font-black text-amber-400">
-                +{gainPercent.toFixed(1)}%
+                {formatPercentGain(gainPercent)}
               </span>
               <span className="text-xs text-slate-200 bg-white/10 px-2.5 py-1 rounded-xl">
-                {checklist.before.readingKwBefore.toFixed(2)} kW ➔ {checklist.after.readingKwAfter.toFixed(2)} kW
+                {formatPowerKw(checklist.before.readingKwBefore)} kW ➔ {formatPowerKw(checklist.after.readingKwAfter)} kW
               </span>
             </div>
           </div>
@@ -263,7 +264,7 @@ export const PdfReportDocument: React.FC<{ checklist: TechnicalChecklist }> = ({
           <div className="text-right bg-white/10 p-3.5 rounded-xl border border-white/10">
             <span className="text-[10px] text-slate-300 block">Economia Mensal Estimada:</span>
             <span className="text-lg font-bold text-amber-400">
-              + R$ {checklist.after.estimatedMonthlySavingsBrl?.toFixed(2) || Math.round(gainPercent * 7.5).toFixed(2)} / mês
+              + {formatCurrency(checklist.after.estimatedMonthlySavingsBrl || Math.round(gainPercent * 7.5))} / mês
             </span>
           </div>
         </div>
@@ -277,7 +278,7 @@ export const PdfReportDocument: React.FC<{ checklist: TechnicalChecklist }> = ({
             <li>• <span className="font-medium">Nível de Sujeira:</span> {checklist.before.dirtLevel.toUpperCase()}</li>
             <li>• <span className="font-medium">Tipos:</span> {checklist.before.dirtTypes.join(', ') || 'Poeira/Fuligem'}</li>
             <li>• <span className="font-medium">Condição Climática:</span> {checklist.before.weatherCondition} ({checklist.before.ambientTempC}°C)</li>
-            <li>• <span className="font-medium">Leitura Inicial:</span> {checklist.before.readingKwBefore.toFixed(2)} kW</li>
+            <li>• <span className="font-medium">Leitura Inicial:</span> {formatPowerKw(checklist.before.readingKwBefore)} kW</li>
           </ul>
         </div>
 
@@ -287,10 +288,39 @@ export const PdfReportDocument: React.FC<{ checklist: TechnicalChecklist }> = ({
             <li>• <span className="font-medium">Água Utilizada:</span> {checklist.procedure.waterSource} (Pura 0 PPM)</li>
             <li>• <span className="font-medium">Método:</span> {checklist.procedure.cleaningMethod.replace(/_/g, ' ')}</li>
             <li>• <span className="font-medium">Inspeção Final:</span> 100% Aprovado & Livre de Manchas</li>
-            <li>• <span className="font-medium">Leitura Final:</span> {checklist.after.readingKwAfter.toFixed(2)} kW</li>
+            <li>• <span className="font-medium">Leitura Final:</span> {formatPowerKw(checklist.after.readingKwAfter)} kW</li>
           </ul>
         </div>
       </div>
+
+      {/* Insumos & Materiais Utilizados (sem valores monetários) */}
+      {checklist.procedure?.selectedExpenses && checklist.procedure.selectedExpenses.length > 0 && (
+        <div className="bg-slate-50/80 border border-slate-200 p-4 rounded-2xl space-y-2">
+          <h5 className="font-bold text-slate-900 uppercase text-[11px] flex items-center gap-1.5">
+            📦 Insumos & Materiais Técnicos Aplicados
+          </h5>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+            {checklist.procedure.selectedExpenses.map((sel) => {
+              const expItem = storage.getExpenseItems().find((i) => i.id === sel.id);
+              if (!expItem) return null;
+              const qty = sel.quantity && sel.quantity > 0 ? sel.quantity : 1;
+              return (
+                <div
+                  key={sel.id}
+                  className="flex items-center justify-between bg-white border border-slate-200 px-3 py-1.5 rounded-xl shadow-2xs"
+                >
+                  <span className="font-semibold text-slate-800 truncate pr-2">
+                    {expItem.name}
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
+                    {qty} {expItem.unit || 'unidade(s)'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Checklist de Integridade & Avarias Pré-Existentes */}
       <div className="bg-amber-50/50 border border-amber-200/60 p-4 rounded-2xl space-y-2">

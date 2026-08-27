@@ -140,6 +140,7 @@ export default function App() {
         {activeTab === 'cliente' && (
           <ClientDashboard
             selectedCustomerId={selectedCustomerId}
+            session={session}
             onSelectCustomer={(id) => setSelectedCustomerId(id)}
             onStartNewChecklist={handleStartNewChecklist}
             onEditChecklist={handleEditChecklist}
@@ -175,6 +176,7 @@ export default function App() {
 
         {activeTab === 'contatos' && (
           <ContactsManager
+            session={session}
             onSelectCustomerForDashboard={handleSelectCustomerForDashboard}
           />
         )}
@@ -218,6 +220,7 @@ export default function App() {
 
       <SettingsModal
         isOpen={isSettingsOpen}
+        session={session}
         onClose={() => setIsSettingsOpen(false)}
       />
     </div>

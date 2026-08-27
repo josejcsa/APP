@@ -27,6 +27,7 @@ import {
 } from 'recharts';
 import { TechnicalChecklist, Appointment, FinancialRecord, Contact } from '../types';
 import { storage } from '../utils/storage';
+import { formatCurrency, formatNumberBRL, formatPowerKw, formatPercentGain } from '../utils/formatters';
 
 interface GeneralDashboardProps {
   onStartNewChecklist: (appointmentId?: string, customerId?: string) => void;
@@ -113,7 +114,7 @@ export const GeneralDashboard: React.FC<GeneralDashboardProps> = ({
         <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
           <div className="flex flex-col items-end">
             <span className="text-sm font-black text-slate-900">
-              R$ {currentMonthRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              {formatCurrency(currentMonthRevenue)}
             </span>
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Faturamento Mensal</span>
           </div>
@@ -379,7 +380,7 @@ export const GeneralDashboard: React.FC<GeneralDashboardProps> = ({
               <YAxis tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
               <Tooltip
                 formatter={(value: any, name: any) => [
-                  name === 'faturamento' ? `R$ ${Number(value).toFixed(2)}` : value,
+                  name === 'faturamento' ? formatCurrency(Number(value)) : value,
                   name === 'faturamento' ? 'Faturamento Bruto' : 'Limpezas Realizadas',
                 ]}
                 contentStyle={{ borderRadius: '16px', border: '1px solid #e2e8f0', fontSize: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}
@@ -443,15 +444,15 @@ export const GeneralDashboard: React.FC<GeneralDashboardProps> = ({
                       <td className="p-3 text-slate-500">{chk.date.split('-').reverse().join('/')}</td>
                       <td className="p-3 text-slate-700">{tech?.name || 'Técnico'}</td>
                       <td className="p-3 font-medium text-slate-800">
-                        {chk.before.readingKwBefore.toFixed(2)} kW ➔ {chk.after.readingKwAfter.toFixed(2)} kW
+                        {formatPowerKw(chk.before.readingKwBefore)} kW ➔ {formatPowerKw(chk.after.readingKwAfter)} kW
                       </td>
                       <td className="p-3">
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                          +{gain.toFixed(1)}%
+                          {formatPercentGain(gain)}
                         </span>
                       </td>
                       <td className="p-3 font-bold text-slate-900">
-                        R$ {chk.serviceValue.toFixed(2)}
+                        {formatCurrency(chk.serviceValue)}
                       </td>
                       <td className="p-3 text-right">
                         <div className="flex items-center justify-end space-x-1.5">

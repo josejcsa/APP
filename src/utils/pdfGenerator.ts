@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import { TechnicalChecklist, Contact, CompanySettings } from '../types';
 import { storage } from './storage';
+import { formatCurrency, formatNumberBRL, formatPowerKw, formatPercentGain } from './formatters';
 
 export class SolarPdfGenerator {
   public static async generateReportPdf(
@@ -125,12 +126,12 @@ export class SolarPdfGenerator {
 
     doc.setFont('helvetica', 'black');
     doc.setFontSize(13);
-    doc.text(`+${gainPercent.toFixed(1)}%`, margin + 6, y + 15);
+    doc.text(`${formatPercentGain(gainPercent)}`, margin + 6, y + 15);
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
     doc.setTextColor(226, 232, 240);
-    doc.text(`${checklist.before.readingKwBefore.toFixed(2)} kW ➔ ${checklist.after.readingKwAfter.toFixed(2)} kW`, margin + 36, y + 15);
+    doc.text(`${formatPowerKw(checklist.before.readingKwBefore)} kW ➔ ${formatPowerKw(checklist.after.readingKwAfter)} kW`, margin + 36, y + 15);
 
     const savings = checklist.after.estimatedMonthlySavingsBrl || Math.round(gainPercent * 7.5);
     doc.setFont('helvetica', 'normal');
@@ -140,7 +141,7 @@ export class SolarPdfGenerator {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10.5);
     doc.setTextColor(251, 191, 36);
-    doc.text(`+ R$ ${savings.toFixed(2)} / mês`, pageWidth - margin - 6, y + 15, { align: 'right' });
+    doc.text(`+ ${formatCurrency(savings)} / mês`, pageWidth - margin - 6, y + 15, { align: 'right' });
 
     y += 23;
 
@@ -175,9 +176,26 @@ export class SolarPdfGenerator {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(51, 65, 85);
-    doc.text(`• Água Utilizada: ${checklist.procedure.waterSource} (Pura 0 PPM)`, margin + halfW + 11, y + 9.5);
+    doc.text(`• Água: ${checklist.procedure.waterSource} (Pura 0 PPM)`, margin + halfW + 11, y + 9.5);
     doc.text(`• Método: ${checklist.procedure.cleaningMethod.replace(/_/g, ' ')}`, margin + halfW + 11, y + 13.5);
-    doc.text(`• Leitura Final: ${checklist.after.readingKwAfter.toFixed(2)} kW`, margin + halfW + 11, y + 17.5);
+
+    const expenseCatalog = storage.getExpenseItems();
+    const suppliesText = (checklist.procedure?.selectedExpenses || [])
+      .map((sel) => {
+        const item = expenseCatalog.find((i) => i.id === sel.id);
+        if (!item) return null;
+        const qty = sel.quantity && sel.quantity > 0 ? sel.quantity : 1;
+        return `${item.name} (${qty} ${item.unit || 'un'})`;
+      })
+      .filter(Boolean)
+      .join(', ');
+
+    if (suppliesText) {
+      const truncatedSupplies = suppliesText.length > 42 ? suppliesText.slice(0, 39) + '...' : suppliesText;
+      doc.text(`• Insumos: ${truncatedSupplies}`, margin + halfW + 11, y + 17.5);
+    } else {
+      doc.text(`• Leitura Final: ${formatPowerKw(checklist.after.readingKwAfter)} kW`, margin + halfW + 11, y + 17.5);
+    }
 
     y += 23;
 

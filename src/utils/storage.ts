@@ -1,5 +1,6 @@
 import {
   Contact,
+  Address,
   SolarServiceItem,
   ExpenseSupplyItem,
   Appointment,
@@ -13,6 +14,7 @@ import {
   NavTabId
 } from '../types';
 import { OfflineFirstService } from './offlineFirstService';
+import { formatCurrency } from './formatters';
 
 const STORAGE_KEYS = {
   CONTACTS: 'elthera_pro_contacts',
@@ -355,11 +357,93 @@ class StorageService {
     localStorage.removeItem(STORAGE_KEYS.LAST_LOGGED_USER);
   }
 
-  public login(phoneOrName: string, passwordInput: string): { success: boolean; session?: AuthSession; message?: string } {
-    return this.authenticate(phoneOrName, passwordInput);
+  public async login(phoneOrName: string, passwordInput: string): Promise<{ success: boolean; session?: AuthSession; message?: string }> {
+    const cleanPhone = (phoneOrName || '').trim();
+    const cleanPassword = (passwordInput || '').trim();
+
+    if (!cleanPhone || !cleanPassword) {
+      return { success: false, message: 'Informe o telefone e a senha de acesso.' };
+    }
+
+    // 1. Tenta autenticação remota no servidor / banco MySQL
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: cleanPhone, password: cleanPassword })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.success && data.session) {
+          const session: AuthSession = data.session;
+          this.setCurrentSession(session);
+          this.setLastLoggedUser({
+            name: session.name,
+            phone: session.phone,
+            role: session.role,
+            isTechnician: session.isTechnician,
+            isAdmin: session.isAdmin,
+            isPartner: session.isPartner,
+          });
+          this.addAuditLog({
+            entityType: 'contact',
+            entityId: session.id,
+            action: 'Edição',
+            user: session.name,
+            summary: `Login realizado por ${session.isAdmin ? 'Administrador' : session.isTechnician ? 'Técnico' : 'Cliente'} "${session.name}"`,
+          });
+          return { success: true, session };
+        }
+      } else if (response.status === 401 || response.status === 400) {
+        const errData = await response.json().catch(() => ({}));
+        return {
+          success: false,
+          message: errData.message || 'Telefone ou senha incorretos.'
+        };
+      }
+    } catch (netErr) {
+      console.warn('⚠️ Falha ao conectar ao endpoint /api/login, tentando fallback local...', netErr);
+    }
+
+    // 2. Tenta endpoint PHP se configurado ou fallback
+    try {
+      const phpEndpoint = this.getSettings().phpApiEndpointUrl || '/start/api/api.php';
+      const phpResponse = await fetch(phpEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login', phone: cleanPhone, password: cleanPassword })
+      });
+
+      if (phpResponse.ok) {
+        const phpData = await phpResponse.json();
+        if (phpData && phpData.success && phpData.session) {
+          const session: AuthSession = phpData.session;
+          this.setCurrentSession(session);
+          this.setLastLoggedUser({
+            name: session.name,
+            phone: session.phone,
+            role: session.role,
+            isTechnician: session.isTechnician,
+            isAdmin: session.isAdmin,
+            isPartner: session.isPartner,
+          });
+          return { success: true, session };
+        }
+      }
+    } catch (e) {
+      // Ignora erro do PHP e vai para fallback offline
+    }
+
+    // 3. Fallback Offline Local
+    return this.authenticateOffline(cleanPhone, cleanPassword);
   }
 
   public authenticate(phoneOrName: string, passwordInput: string): { success: boolean; session?: AuthSession; message?: string } {
+    return this.authenticateOffline(phoneOrName, passwordInput);
+  }
+
+  public authenticateOffline(phoneOrName: string, passwordInput: string): { success: boolean; session?: AuthSession; message?: string } {
     const cleanPhoneInput = normalizePhoneNumber(phoneOrName);
     const cleanPassword = passwordInput.trim();
 
@@ -385,7 +469,7 @@ class StorageService {
         entityId: 'admin',
         action: 'Edição',
         user: MASTER_ADMIN_USER.name,
-        summary: 'Login realizado pelo Administrador Geral',
+        summary: 'Login realizado pelo Administrador Geral (Modo Offline)',
       });
       return { success: true, session };
     }
@@ -423,16 +507,18 @@ class StorageService {
       : matchedContact.isTechnician
       ? ['checklist', 'agenda', 'cliente']
       : ['cliente'];
-    const allowedTabs = matchedContact.allowedNavTabs && matchedContact.allowedNavTabs.length > 0
-      ? matchedContact.allowedNavTabs
-      : defaultTabs;
+    const allowedTabs: NavTabId[] = matchedContact.isAdmin
+      ? ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']
+      : (matchedContact.allowedNavTabs && matchedContact.allowedNavTabs.length > 0
+        ? matchedContact.allowedNavTabs
+        : defaultTabs);
 
     const session: AuthSession = {
       id: matchedContact.id,
       name: matchedContact.name,
       phone: matchedContact.phone,
       role: matchedContact.isAdmin ? 'admin' : matchedContact.isTechnician ? 'technician' : 'client',
-      isTechnician: matchedContact.isTechnician,
+      isTechnician: Boolean(matchedContact.isTechnician),
       isAdmin: Boolean(matchedContact.isAdmin),
       isPartner: Boolean(matchedContact.isPartner),
       contactId: matchedContact.id,
@@ -446,9 +532,9 @@ class StorageService {
       name: matchedContact.name,
       phone: matchedContact.phone,
       role: session.role,
-      isTechnician: matchedContact.isTechnician,
-      isAdmin: matchedContact.isAdmin,
-      isPartner: matchedContact.isPartner,
+      isTechnician: Boolean(matchedContact.isTechnician),
+      isAdmin: Boolean(matchedContact.isAdmin),
+      isPartner: Boolean(matchedContact.isPartner),
     });
 
     this.addAuditLog({
@@ -491,7 +577,35 @@ class StorageService {
 
   // Contacts (Clients & Technicians)
   public getContacts(): Contact[] {
-    return this.get<Contact[]>(STORAGE_KEYS.CONTACTS, INITIAL_CONTACTS);
+    const raw = this.get<Contact[]>(STORAGE_KEYS.CONTACTS, INITIAL_CONTACTS);
+    return raw.map((c) => {
+      const safeAddress: Address = {
+        street: c.address?.street || '',
+        number: c.address?.number || '',
+        complement: c.address?.complement || '',
+        neighborhood: c.address?.neighborhood || '',
+        city: c.address?.city || '',
+        state: c.address?.state || '',
+        zipCode: c.address?.zipCode || '',
+        distanceKm: c.address?.distanceKm || 0,
+        coordinates: c.address?.coordinates,
+      };
+
+      const safeAllowedTabs: NavTabId[] = c.isAdmin
+        ? ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']
+        : (c.allowedNavTabs && c.allowedNavTabs.length > 0
+          ? c.allowedNavTabs
+          : (c.isTechnician ? ['checklist', 'agenda', 'cliente'] : ['cliente']));
+
+      return {
+        ...c,
+        address: safeAddress,
+        isAdmin: Boolean(c.isAdmin),
+        isPartner: Boolean(c.isPartner),
+        isTechnician: Boolean(c.isTechnician),
+        allowedNavTabs: safeAllowedTabs,
+      };
+    });
   }
 
   public getClients(): Contact[] {
@@ -514,47 +628,83 @@ class StorageService {
     const settings = this.getSettings();
     const operator = user || settings.currentUser || 'Administrador Elthera';
 
+    const safeAddress: Address = {
+      street: contact.address?.street || '',
+      number: contact.address?.number || '',
+      complement: contact.address?.complement || '',
+      neighborhood: contact.address?.neighborhood || '',
+      city: contact.address?.city || '',
+      state: contact.address?.state || '',
+      zipCode: contact.address?.zipCode || '',
+      distanceKm: Number(contact.address?.distanceKm || 0),
+      coordinates: contact.address?.coordinates,
+    };
+
+    const safeAllowedTabs: NavTabId[] = contact.isAdmin
+      ? ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']
+      : (contact.allowedNavTabs && contact.allowedNavTabs.length > 0
+        ? contact.allowedNavTabs
+        : (contact.isTechnician ? ['checklist', 'agenda', 'cliente'] : ['cliente']));
+
+    const normalizedContact: Contact = {
+      ...contact,
+      guid,
+      id: guid,
+      address: safeAddress,
+      isAdmin: Boolean(contact.isAdmin),
+      isPartner: Boolean(contact.isPartner),
+      isTechnician: Boolean(contact.isTechnician),
+      allowedNavTabs: safeAllowedTabs,
+      updatedAt: new Date().toISOString(),
+    };
+
     if (index >= 0) {
-      contacts[index] = { 
-        ...contact, 
-        guid, 
-        id: guid,
-        id_banco: contact.id_banco !== undefined ? contact.id_banco : contacts[index].id_banco || null,
-        sincronizado: contact.sincronizado || false,
-        updatedAt: new Date().toISOString() 
-      };
-      updatedContact = contacts[index];
+      normalizedContact.id_banco = contact.id_banco !== undefined ? contact.id_banco : contacts[index].id_banco || null;
+      normalizedContact.sincronizado = contact.sincronizado || false;
+      normalizedContact.createdAt = contacts[index].createdAt || new Date().toISOString();
+      contacts[index] = normalizedContact;
+      updatedContact = normalizedContact;
       this.set(STORAGE_KEYS.CONTACTS, contacts);
       this.addAuditLog({
         entityType: 'contact',
         entityId: updatedContact.id,
         action: 'Edição',
         user: operator,
-        summary: `Cadastro de ${contact.isTechnician ? 'Técnico' : 'Cliente'} "${contact.name}" atualizado`,
+        summary: `Cadastro de ${contact.isAdmin ? 'Administrador' : contact.isTechnician ? 'Técnico' : 'Cliente'} "${contact.name}" atualizado`,
       });
     } else {
-      updatedContact = {
-        ...contact,
-        guid,
-        id: guid,
-        id_banco: null,
-        sincronizado: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+      normalizedContact.id_banco = null;
+      normalizedContact.sincronizado = false;
+      normalizedContact.createdAt = new Date().toISOString();
+      updatedContact = normalizedContact;
       this.set(STORAGE_KEYS.CONTACTS, [updatedContact, ...contacts]);
       this.addAuditLog({
         entityType: 'contact',
         entityId: updatedContact.id,
         action: 'Criação',
         user: operator,
-        summary: `Novo ${contact.isTechnician ? 'Técnico' : 'Cliente'} "${contact.name}" cadastrado`,
+        summary: `Novo ${contact.isAdmin ? 'Administrador' : contact.isTechnician ? 'Técnico' : 'Cliente'} "${contact.name}" cadastrado`,
       });
     }
 
     // Buffer Offline-First no IndexedDB
     OfflineFirstService.salvarItem('contact', updatedContact);
     this.addToSyncQueue({ type: 'contact', action: 'save', data: updatedContact });
+
+    // Se o contato editado for o usuário da sessão atual, atualiza a sessão ativa
+    const currentSession = this.getCurrentSession();
+    if (currentSession && (currentSession.contactId === updatedContact.id || currentSession.phone === updatedContact.phone)) {
+      this.setCurrentSession({
+        ...currentSession,
+        name: updatedContact.name,
+        phone: updatedContact.phone,
+        role: updatedContact.isAdmin ? 'admin' : updatedContact.isTechnician ? 'technician' : 'client',
+        isAdmin: Boolean(updatedContact.isAdmin),
+        isTechnician: Boolean(updatedContact.isTechnician),
+        isPartner: Boolean(updatedContact.isPartner),
+        allowedNavTabs: updatedContact.allowedNavTabs || currentSession.allowedNavTabs,
+      });
+    }
 
     return updatedContact;
   }
@@ -915,7 +1065,7 @@ class StorageService {
         entityId: saved.id,
         action: 'Edição',
         user: operator,
-        summary: `Registro Financeiro #${saved.id.slice(-6)} para "${customer?.name || 'Cliente'}" atualizado (Valor: R$ ${saved.grossAmount.toFixed(2)}, Status: ${saved.paymentStatus})`,
+        summary: `Registro Financeiro #${saved.id.slice(-6)} para "${customer?.name || 'Cliente'}" atualizado (Valor: ${formatCurrency(saved.grossAmount)}, Status: ${saved.paymentStatus})`,
       });
     } else {
       saved = {
@@ -932,7 +1082,7 @@ class StorageService {
         entityId: saved.id,
         action: 'Criação',
         user: operator,
-        summary: `Novo Registro Financeiro gerado para "${customer?.name || 'Cliente'}" no valor de R$ ${saved.grossAmount.toFixed(2)}`,
+        summary: `Novo Registro Financeiro gerado para "${customer?.name || 'Cliente'}" no valor de ${formatCurrency(saved.grossAmount)}`,
       });
     }
 
@@ -956,7 +1106,7 @@ class StorageService {
       entityId: id,
       action: 'Exclusão',
       user: operator,
-      summary: `Registro financeiro de ${customer?.name || 'Cliente'} (R$ ${fin?.grossAmount.toFixed(2) || '0.00'}) excluído. ${reason ? `Motivo: ${reason}` : ''}`,
+      summary: `Registro financeiro de ${customer?.name || 'Cliente'} (${formatCurrency(fin?.grossAmount || 0)}) excluído. ${reason ? `Motivo: ${reason}` : ''}`,
     });
 
     this.addToSyncQueue({ type: 'financial', action: 'delete', data: { id, guid: fin?.guid || id } });
@@ -978,10 +1128,11 @@ class StorageService {
         .forEach((e) => {
           const item = allExpenseItems.find((i) => i.id === e.id);
           if (item) {
+            const qty = (e.quantity && e.quantity > 0) ? e.quantity : 1;
             expensesList.push({
               id: `fexp-${Date.now()}-${item.id}`,
-              description: item.name,
-              amount: item.defaultUnitCost,
+              description: `${item.name} (${qty} ${item.unit || 'un'})`,
+              amount: item.defaultUnitCost * qty,
               category: (item.category === 'insumo' ? 'material' : 'outro') as any,
               date: checklist.date,
             });

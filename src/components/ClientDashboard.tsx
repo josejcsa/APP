@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   User,
   Zap,
@@ -20,13 +20,18 @@ import {
   Trash2,
   Folder,
   History,
-  Lock
+  Lock,
+  Save,
+  X,
+  CheckCircle2
 } from 'lucide-react';
-import { Contact, TechnicalChecklist, Appointment, FinancialRecord } from '../types';
+import { Contact, TechnicalChecklist, Appointment, FinancialRecord, AuthSession, Address, SolarSystemInfo } from '../types';
 import { storage } from '../utils/storage';
+import { formatCurrency, formatNumberBRL, formatPowerKw, formatPercentGain } from '../utils/formatters';
 
 interface ClientDashboardProps {
   selectedCustomerId?: string;
+  session?: AuthSession | null;
   onSelectCustomer: (id: string) => void;
   onStartNewChecklist: (appointmentId?: string, customerId?: string) => void;
   onEditChecklist?: (checklist: TechnicalChecklist) => void;
@@ -36,6 +41,7 @@ interface ClientDashboardProps {
 
 export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   selectedCustomerId,
+  session,
   onSelectCustomer,
   onStartNewChecklist,
   onEditChecklist,
@@ -49,16 +55,128 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
   const [allFinancials, setAllFinancials] = useState<FinancialRecord[]>(storage.getFinancials());
   const settings = storage.getSettings();
 
-  // Delete modal state
+  const isClientUser = Boolean(session && !session.isAdmin && !session.isTechnician);
+  const isAdminUser = Boolean(session?.isAdmin);
+  const isTechnicianUser = Boolean(session?.isTechnician);
+
+  // Identify matching client if user is client
+  const loggedClient = clients.find((c) => 
+    (session?.contactId && c.id === session.contactId) || 
+    (session?.phone && (c.phone === session.phone || c.phone.replace(/\D/g, '') === session.phone.replace(/\D/g, '')))
+  ) || clients[0];
+
+  const [activeCustomerId, setActiveCustomerId] = useState<string>(() => {
+    if (isClientUser && loggedClient) {
+      return loggedClient.id;
+    }
+    return selectedCustomerId || (clients[0]?.id || '');
+  });
+
+  useEffect(() => {
+    if (isClientUser && loggedClient) {
+      setActiveCustomerId(loggedClient.id);
+    } else if (selectedCustomerId) {
+      setActiveCustomerId(selectedCustomerId);
+    }
+  }, [selectedCustomerId, isClientUser, loggedClient?.id]);
+
+  // Delete modal state (Admin only)
   const [checklistToDelete, setChecklistToDelete] = useState<TechnicalChecklist | null>(null);
   const [deleteReason, setDeleteReason] = useState<string>('');
-  const [deleteOperator, setDeleteOperator] = useState<string>(settings.currentUser || 'Técnico Responsável');
+  const [deleteOperator, setDeleteOperator] = useState<string>(session?.name || settings.currentUser || 'Administrador');
 
-  const [activeCustomerId, setActiveCustomerId] = useState<string>(
-    selectedCustomerId || (clients[0]?.id || '')
-  );
+  // Client Self-Edit Modal State
+  const [isSelfEditOpen, setIsSelfEditOpen] = useState(false);
+  const [editSuccessMsg, setEditSuccessMsg] = useState('');
+  
+  const currentClient = isClientUser && loggedClient 
+    ? loggedClient 
+    : (clients.find((c) => c.id === activeCustomerId) || clients[0]);
 
-  const currentClient = clients.find((c) => c.id === activeCustomerId) || clients[0];
+  // Edit form state
+  const [selfName, setSelfName] = useState('');
+  const [selfDocument, setSelfDocument] = useState('');
+  const [selfPhone, setSelfPhone] = useState('');
+  const [selfEmail, setSelfEmail] = useState('');
+  const [selfStreet, setSelfStreet] = useState('');
+  const [selfNumber, setSelfNumber] = useState('');
+  const [selfComplement, setSelfComplement] = useState('');
+  const [selfNeighborhood, setSelfNeighborhood] = useState('');
+  const [selfCity, setSelfCity] = useState('');
+  const [selfState, setSelfState] = useState('');
+  const [selfZipCode, setSelfZipCode] = useState('');
+  const [selfPowerKwp, setSelfPowerKwp] = useState(10);
+  const [selfModuleCount, setSelfModuleCount] = useState(20);
+  const [selfInverterBrandModel, setSelfInverterBrandModel] = useState('');
+  const [selfRoofType, setSelfRoofType] = useState('fibrocimento');
+  const [selfCleaningPeriodicityMonths, setSelfCleaningPeriodicityMonths] = useState(6);
+
+  const openSelfEditModal = () => {
+    if (!currentClient) return;
+    setSelfName(currentClient.name || '');
+    setSelfDocument(currentClient.document || '');
+    setSelfPhone(currentClient.phone || '');
+    setSelfEmail(currentClient.email || '');
+    setSelfStreet(currentClient.address?.street || '');
+    setSelfNumber(currentClient.address?.number || '');
+    setSelfComplement(currentClient.address?.complement || '');
+    setSelfNeighborhood(currentClient.address?.neighborhood || '');
+    setSelfCity(currentClient.address?.city || '');
+    setSelfState(currentClient.address?.state || '');
+    setSelfZipCode(currentClient.address?.zipCode || '');
+    setSelfPowerKwp(currentClient.solarSystem?.powerKwp || 10);
+    setSelfModuleCount(currentClient.solarSystem?.moduleCount || 20);
+    setSelfInverterBrandModel(currentClient.solarSystem?.inverterBrandModel || '');
+    setSelfRoofType(currentClient.solarSystem?.roofType || 'fibrocimento');
+    setSelfCleaningPeriodicityMonths(currentClient.solarSystem?.cleaningPeriodicityMonths || 6);
+    setIsSelfEditOpen(true);
+  };
+
+  const handleSaveSelfData = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentClient) return;
+
+    const updatedAddress: Address = {
+      street: selfStreet,
+      number: selfNumber,
+      complement: selfComplement,
+      neighborhood: selfNeighborhood,
+      city: selfCity,
+      state: selfState,
+      zipCode: selfZipCode,
+      distanceKm: currentClient.address?.distanceKm || 0,
+      coordinates: currentClient.address?.coordinates,
+    };
+
+    const updatedSolar: SolarSystemInfo = {
+      powerKwp: Number(selfPowerKwp),
+      moduleCount: Number(selfModuleCount),
+      inverterBrandModel: selfInverterBrandModel,
+      roofType: selfRoofType,
+      structureType: currentClient.solarSystem?.structureType || 'fixa',
+      cleaningPeriodicityMonths: Number(selfCleaningPeriodicityMonths),
+    };
+
+    const updatedContact: Contact = {
+      ...currentClient,
+      name: selfName.trim(),
+      document: selfDocument.trim(),
+      phone: selfPhone.trim(),
+      email: selfEmail.trim(),
+      address: updatedAddress,
+      solarSystem: updatedSolar,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const saved = storage.saveContact(updatedContact, session?.name || selfName);
+    setClients(storage.getClients());
+    setEditSuccessMsg('Seus dados cadastrais foram atualizados com sucesso!');
+    setTimeout(() => {
+      setEditSuccessMsg('');
+      setIsSelfEditOpen(false);
+    }, 1500);
+  };
+
   const clientChecklists = allChecklists.filter((c) => c.customerId === currentClient?.id);
   const clientAppointments = allAppointments.filter((a) => a.customerId === currentClient?.id);
   const clientFinancials = allFinancials.filter((f) => f.customerId === currentClient?.id);
@@ -94,14 +212,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           </div>
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-              Painel Individual do Cliente
+              {isClientUser ? 'Meu Portal de Atendimento' : 'Painel Individual do Cliente'}
             </label>
-            <h2 className="text-base font-bold text-slate-900 tracking-tight">Histórico Técnico & Financeiro</h2>
+            <h2 className="text-base font-bold text-slate-900 tracking-tight">
+              {isClientUser ? `Bem-vindo, ${currentClient?.name || 'Cliente'}` : 'Histórico Técnico & Financeiro'}
+            </h2>
           </div>
         </div>
 
         <div className="flex items-center space-x-2.5 w-full sm:w-auto">
-          {clients.length > 0 ? (
+          {!isClientUser && clients.length > 0 && (
             <select
               id="select-active-client-portal"
               value={currentClient?.id || ''}
@@ -117,18 +237,32 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 </option>
               ))}
             </select>
-          ) : (
-            <span className="text-xs text-slate-400 font-medium">Nenhum cliente cadastrado</span>
           )}
 
-          <button
-            type="button"
-            onClick={() => onStartNewChecklist(undefined, currentClient?.id)}
-            className="px-4 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs shadow-amber-200 transition-all active:scale-95 shrink-0 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>+ Novo Checklist</span>
-          </button>
+          {/* Botão de Auto-Edição de Dados para o Cliente */}
+          {isClientUser && currentClient && (
+            <button
+              type="button"
+              id="btn-edit-my-info"
+              onClick={openSelfEditModal}
+              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs transition-all active:scale-95 cursor-pointer"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+              <span>Alterar Meus Dados</span>
+            </button>
+          )}
+
+          {/* Botão de Novo Checklist (Apenas Admins e Técnicos) */}
+          {!isClientUser && (
+            <button
+              type="button"
+              onClick={() => onStartNewChecklist(undefined, currentClient?.id)}
+              className="px-4 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs shadow-amber-200 transition-all active:scale-95 shrink-0 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Novo Checklist</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -141,27 +275,33 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
               <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="font-bold text-slate-900 text-base tracking-tight">{currentClient.name}</h3>
-                  <span className="text-xs text-slate-400">{currentClient.personType} • {currentClient.document || 'Sem doc'}</span>
+                  <span className="text-xs text-slate-400">{currentClient.personType || 'Pessoa Física'} • {currentClient.document || 'Sem documento'}</span>
                 </div>
-                <span className="px-2.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-[10px] font-bold">
-                  Cliente Ativo
-                </span>
+                <button
+                  type="button"
+                  onClick={openSelfEditModal}
+                  className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Editar dados cadastrais e endereço"
+                >
+                  <Edit3 className="w-3 h-3 text-amber-700" />
+                  <span>Editar Dados</span>
+                </button>
               </div>
 
               <div className="space-y-2.5 text-xs text-slate-700">
                 <div className="flex items-center space-x-2">
                   <Phone className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                  <span className="font-semibold">{currentClient.phone}</span>
+                  <span className="font-semibold">{currentClient.phone || 'Telefone não informado'}</span>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Mail className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                  <span className="text-slate-600">{currentClient.email}</span>
+                  <span className="text-slate-600">{currentClient.email || 'E-mail não informado'}</span>
                 </div>
                 <div className="flex items-start space-x-2">
                   <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
                   <span className="text-slate-600 leading-relaxed">
-                    {currentClient.address.street}, {currentClient.address.number}
-                    {currentClient.address.complement ? ` (${currentClient.address.complement})` : ''} - {currentClient.address.neighborhood}, {currentClient.address.city}/{currentClient.address.state}
+                    {currentClient.address?.street || 'Rua não cadastrada'}, {currentClient.address?.number || 'S/N'}
+                    {currentClient.address?.complement ? ` (${currentClient.address.complement})` : ''} - {currentClient.address?.neighborhood || ''}, {currentClient.address?.city || ''}/{currentClient.address?.state || ''}
                   </span>
                 </div>
               </div>
@@ -218,11 +358,11 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                 </div>
                 <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-200/50">
                   <span className="text-emerald-900/70 block text-[10px] font-bold uppercase">Economia Gerada</span>
-                  <span className="text-base font-black text-emerald-700">R$ {totalEstimatedSavingsBrl.toFixed(2)}/mês</span>
+                  <span className="text-base font-black text-emerald-700">{formatCurrency(totalEstimatedSavingsBrl)}/mês</span>
                 </div>
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60">
                   <span className="text-slate-500 block text-[10px] font-bold uppercase">Total Investido</span>
-                  <span className="text-base font-black text-slate-800">R$ {totalSpent.toFixed(2)}</span>
+                  <span className="text-base font-black text-slate-800">{formatCurrency(totalSpent)}</span>
                 </div>
               </div>
             </div>
@@ -243,14 +383,16 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
             {clientChecklists.length === 0 ? (
               <div className="text-center py-12 text-slate-400 space-y-2">
                 <AlertCircle className="w-8 h-8 mx-auto opacity-40 text-slate-400" />
-                <p className="text-xs font-medium">Nenhum checklist concluído para este cliente ainda.</p>
-                <button
-                  type="button"
-                  onClick={() => onStartNewChecklist(undefined, currentClient.id)}
-                  className="px-4 py-2 bg-amber-400 hover:bg-amber-500 text-amber-950 rounded-xl text-xs font-bold shadow-xs"
-                >
-                  Realizar Primeiro Checklist
-                </button>
+                <p className="text-xs font-medium">Nenhum checklist concluído para esta usina ainda.</p>
+                {!isClientUser && (
+                  <button
+                    type="button"
+                    onClick={() => onStartNewChecklist(undefined, currentClient.id)}
+                    className="px-4 py-2 bg-amber-400 hover:bg-amber-500 text-amber-950 rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                  >
+                    Realizar Primeiro Checklist
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -282,7 +424,8 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                             <FileText className="w-3.5 h-3.5" />
                             <span>Ver Laudo PDF</span>
                           </button>
-                          {onEditChecklist && (
+                          {/* Botão de Edição (Admins e Técnicos) */}
+                          {!isClientUser && onEditChecklist && (
                             <button
                               type="button"
                               onClick={() => onEditChecklist(chk)}
@@ -293,15 +436,18 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                               <span>Editar</span>
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => setChecklistToDelete(chk)}
-                            title="Excluir checklist (mantém registro na auditoria)"
-                            className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Excluir</span>
-                          </button>
+                          {/* Botão de Exclusão (Apenas Admins) */}
+                          {isAdminUser && (
+                            <button
+                              type="button"
+                              onClick={() => setChecklistToDelete(chk)}
+                              title="Excluir checklist (mantém registro na auditoria)"
+                              className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Excluir</span>
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -310,21 +456,21 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                           <span className="text-slate-400 block text-[10px] font-bold uppercase">Potência Instantânea:</span>
                           <span className="font-bold text-slate-900">
-                            {chk.before.readingKwBefore.toFixed(2)} kW ➔ {chk.after.readingKwAfter.toFixed(2)} kW
+                            {formatPowerKw(chk.before.readingKwBefore)} kW ➔ {formatPowerKw(chk.after.readingKwAfter)} kW
                           </span>
                         </div>
 
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                           <span className="text-slate-400 block text-[10px] font-bold uppercase">Economia Estimada:</span>
                           <span className="font-bold text-emerald-700">
-                            + R$ {chk.after.estimatedMonthlySavingsBrl?.toFixed(2) || '0.00'} / mês
+                            + {formatCurrency(chk.after.estimatedMonthlySavingsBrl || 0)} / mês
                           </span>
                         </div>
 
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                           <span className="text-slate-400 block text-[10px] font-bold uppercase">Valor do Serviço:</span>
                           <span className="font-bold text-slate-900">
-                            R$ {chk.serviceValue.toFixed(2)} ({chk.paymentMethod.toUpperCase()})
+                            {formatCurrency(chk.serviceValue)} ({chk.paymentMethod.toUpperCase()})
                           </span>
                         </div>
                       </div>
@@ -384,15 +530,252 @@ export const ClientDashboard: React.FC<ClientDashboardProps> = ({
           <p className="text-xs text-slate-400 max-w-md mx-auto">
             Cadastre seu primeiro cliente ou inicie um checklist para visualizar os dados técnicos da usina, histórico de atendimentos e laudos em PDF.
           </p>
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={() => onStartNewChecklist()}
-              className="px-5 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 font-bold text-xs rounded-xl shadow-xs shadow-amber-200 transition-all cursor-pointer inline-flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Cadastrar Atendimento / Checklist</span>
-            </button>
+          {!isClientUser && (
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => onStartNewChecklist()}
+                className="px-5 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 font-bold text-xs rounded-xl shadow-xs shadow-amber-200 transition-all cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Cadastrar Atendimento / Checklist</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal de Alteração dos Próprios Dados do Cliente */}
+      {isSelfEditOpen && currentClient && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 my-8 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-400 text-amber-950 flex items-center justify-center font-bold">
+                  <Edit3 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Alterar Meus Dados de Cadastro</h3>
+                  <p className="text-xs text-slate-500">Atualize suas informações de contato, endereço e especificações da usina.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSelfEditOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {editSuccessMsg && (
+              <div className="m-5 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>{editSuccessMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveSelfData} className="p-6 space-y-5 text-xs">
+              {/* Seção 1: Dados Pessoais */}
+              <div>
+                <h4 className="font-bold text-slate-900 text-xs mb-3 uppercase tracking-wider flex items-center gap-1 text-amber-600">
+                  <User className="w-3.5 h-3.5" /> 1. Dados Pessoais / Empresa
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Nome Completo / Razão Social *</label>
+                    <input
+                      type="text"
+                      required
+                      value={selfName}
+                      onChange={(e) => setSelfName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400 font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">CPF ou CNPJ</label>
+                    <input
+                      type="text"
+                      value={selfDocument}
+                      onChange={(e) => setSelfDocument(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">WhatsApp / Telefone *</label>
+                    <input
+                      type="text"
+                      required
+                      value={selfPhone}
+                      onChange={(e) => setSelfPhone(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400 font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">E-mail</label>
+                    <input
+                      type="email"
+                      value={selfEmail}
+                      onChange={(e) => setSelfEmail(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Seção 2: Endereço */}
+              <div className="pt-3 border-t border-slate-100">
+                <h4 className="font-bold text-slate-900 text-xs mb-3 uppercase tracking-wider flex items-center gap-1 text-amber-600">
+                  <MapPin className="w-3.5 h-3.5" /> 2. Endereço da Instalação
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block font-bold text-slate-700 mb-1">Rua / Logradouro</label>
+                    <input
+                      type="text"
+                      value={selfStreet}
+                      onChange={(e) => setSelfStreet(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Número</label>
+                    <input
+                      type="text"
+                      value={selfNumber}
+                      onChange={(e) => setSelfNumber(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Complemento</label>
+                    <input
+                      type="text"
+                      value={selfComplement}
+                      onChange={(e) => setSelfComplement(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Bairro</label>
+                    <input
+                      type="text"
+                      value={selfNeighborhood}
+                      onChange={(e) => setSelfNeighborhood(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Cidade</label>
+                    <input
+                      type="text"
+                      value={selfCity}
+                      onChange={(e) => setSelfCity(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Estado (UF)</label>
+                    <input
+                      type="text"
+                      maxLength={2}
+                      value={selfState}
+                      onChange={(e) => setSelfState(e.target.value.toUpperCase())}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">CEP</label>
+                    <input
+                      type="text"
+                      value={selfZipCode}
+                      onChange={(e) => setSelfZipCode(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Seção 3: Usina Solar */}
+              <div className="pt-3 border-t border-slate-100">
+                <h4 className="font-bold text-slate-900 text-xs mb-3 uppercase tracking-wider flex items-center gap-1 text-amber-600">
+                  <Zap className="w-3.5 h-3.5" /> 3. Dados da Usina Solar
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Potência (kWp)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={selfPowerKwp}
+                      onChange={(e) => setSelfPowerKwp(Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Qtd. Módulos</label>
+                    <input
+                      type="number"
+                      value={selfModuleCount}
+                      onChange={(e) => setSelfModuleCount(Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Inversor (Marca/Modelo)</label>
+                    <input
+                      type="text"
+                      value={selfInverterBrandModel}
+                      onChange={(e) => setSelfInverterBrandModel(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Tipo de Telhado</label>
+                    <select
+                      value={selfRoofType}
+                      onChange={(e) => setSelfRoofType(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    >
+                      <option value="fibrocimento">Fibrocimento</option>
+                      <option value="ceramica">Cerâmica</option>
+                      <option value="metalico">Metálico / Trapezoidal</option>
+                      <option value="laje">Laje de Concreto</option>
+                      <option value="solo">Estrutura de Solo</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Intervalo de Limpeza</label>
+                    <select
+                      value={selfCleaningPeriodicityMonths}
+                      onChange={(e) => setSelfCleaningPeriodicityMonths(Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-amber-400"
+                    >
+                      <option value={3}>A cada 3 meses</option>
+                      <option value={6}>A cada 6 meses (Padrão)</option>
+                      <option value={12}>A cada 12 meses</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2.5 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsSelfEditOpen(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 font-bold transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-amber-400 hover:bg-amber-500 text-amber-950 font-bold rounded-xl shadow-xs shadow-amber-200 flex items-center gap-1.5 transition-all active:scale-95"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>Salvar Alterações</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

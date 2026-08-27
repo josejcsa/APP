@@ -671,6 +671,224 @@ export async function fetchRemoteSyncRecords(options: {
 }
 
 /**
+ * ===== NOVO: Autenticação de Usuário e Administração via Banco de Dados =====
+ */
+export async function authenticateUserInDatabase(phoneOrLogin: string, passwordInput: string): Promise<{
+  success: boolean;
+  message?: string;
+  session?: {
+    id: string;
+    name: string;
+    phone: string;
+    role: 'admin' | 'technician' | 'client';
+    isTechnician?: boolean;
+    isAdmin?: boolean;
+    isPartner?: boolean;
+    contactId?: string;
+    allowedNavTabs: Array<'geral' | 'cliente' | 'checklist' | 'agenda' | 'financeiro' | 'contatos'>;
+    loginTimestamp: string;
+    token?: string;
+  };
+  banco_tipo?: string;
+}> {
+  const cleanInput = (phoneOrLogin || '').trim();
+  const cleanPhone = cleanInput.replace(/\D/g, '');
+  const cleanPassword = (passwordInput || '').trim();
+
+  const masterPhoneNorm = '47988638516';
+  const masterPassword = process.env.ADMIN_PASSWORD || 'ELT2026A';
+
+  // 1. Verificação do Usuário Master / Administrador Geral (Exclusivo do Servidor)
+  if (
+    (cleanPhone === masterPhoneNorm || cleanInput.toLowerCase() === 'admin' || cleanInput === '(47) 98863-8516' || cleanInput === '(47)98863-8516') &&
+    cleanPassword === masterPassword
+  ) {
+    const session = {
+      id: 'usr-admin-master',
+      name: 'Administrador Geral Elthera',
+      phone: '(47) 98863-8516',
+      role: 'admin' as const,
+      isAdmin: true,
+      isPartner: false,
+      isTechnician: false,
+      allowedNavTabs: ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos'] as Array<'geral' | 'cliente' | 'checklist' | 'agenda' | 'financeiro' | 'contatos'>,
+      loginTimestamp: new Date().toISOString(),
+      token: `auth_master_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`
+    };
+
+    // Registra log de auditoria no banco se disponível
+    try {
+      const pool = getDatabasePool();
+      const connection = await pool.getConnection();
+      await connection.query(
+        `INSERT INTO auditoria_historico (guid, entity_type, entity_id, acao, usuario, resumo, dados_json)
+         VALUES (?, 'auth', 'admin', 'Login', 'Administrador Geral', 'Login master efetuado no servidor', ?)`,
+        [`aud_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`, JSON.stringify({ phone: cleanPhone, timestamp: new Date().toISOString() })]
+      );
+      connection.release();
+    } catch (e) {
+      // Ignora erro de auditoria se banco estiver indisponível
+    }
+
+    return {
+      success: true,
+      message: 'Autenticado com privilégios de Administrador Geral.',
+      session,
+      banco_tipo: 'MySQL Real'
+    };
+  }
+
+  // 2. Consulta no Banco de Dados MySQL (cadastros_contatos e registros_sincronizacao)
+  try {
+    const pool = getDatabasePool();
+    const connection = await pool.getConnection();
+
+    // Busca contato pelo telefone ou documento
+    const [rows]: any = await connection.query(
+      `SELECT guid, tipo, nome, documento, telefone, email, dados_json, atualizado_em 
+       FROM cadastros_contatos 
+       WHERE telefone LIKE ? OR REPLACE(REPLACE(REPLACE(REPLACE(telefone, '(', ''), ')', ''), '-', ''), ' ', '') = ? 
+       LIMIT 10`,
+      [`%${cleanPhone.slice(-8)}%`, cleanPhone]
+    );
+
+    // Também verifica em registros_sincronizacao caso ainda não tenha sido populado em cadastros_contatos
+    let matchedContact: any = null;
+    let contactData: any = null;
+
+    if (rows && rows.length > 0) {
+      for (const row of rows) {
+        let parsedData: any = null;
+        try {
+          parsedData = typeof row.dados_json === 'string' ? JSON.parse(row.dados_json) : row.dados_json;
+        } catch (e) {
+          parsedData = {};
+        }
+
+        const rowPhoneClean = (row.telefone || parsedData.phone || '').replace(/\D/g, '');
+        if (rowPhoneClean === cleanPhone || (cleanPhone.length >= 8 && rowPhoneClean.endsWith(cleanPhone.slice(-8)))) {
+          matchedContact = row;
+          contactData = parsedData;
+          break;
+        }
+      }
+    }
+
+    // Se não encontrou em cadastros_contatos, busca em registros_sincronizacao
+    if (!matchedContact) {
+      const [syncRows]: any = await connection.query(
+        `SELECT guid, dados_json FROM registros_sincronizacao WHERE tipo_entidade = 'contact' ORDER BY id DESC LIMIT 200`
+      );
+
+      if (syncRows && syncRows.length > 0) {
+        for (const sr of syncRows) {
+          try {
+            const parsed = typeof sr.dados_json === 'string' ? JSON.parse(sr.dados_json) : sr.dados_json;
+            const parsedPhoneClean = (parsed.phone || parsed.telefone || '').replace(/\D/g, '');
+            if (parsedPhoneClean === cleanPhone || (cleanPhone.length >= 8 && parsedPhoneClean.endsWith(cleanPhone.slice(-8)))) {
+              matchedContact = { guid: sr.guid, ...parsed };
+              contactData = parsed;
+              break;
+            }
+          } catch (e) {
+            // Ignora JSON mal formatado
+          }
+        }
+      }
+    }
+
+    connection.release();
+
+    if (!matchedContact) {
+      return {
+        success: false,
+        message: 'Telefone não localizado no cadastro. Verifique o número informado ou contate o administrador.'
+      };
+    }
+
+    const contactPassword = contactData?.password || matchedContact?.password || '';
+    if (!contactPassword) {
+      return {
+        success: false,
+        message: 'Este usuário ainda não possui senha cadastrada. Solicite o cadastro de senha ao administrador.'
+      };
+    }
+
+    if (contactPassword !== cleanPassword) {
+      return {
+        success: false,
+        message: 'Senha incorreta. A senha é composta por 8 dígitos alfanuméricos.'
+      };
+    }
+
+    const isAdmin = Boolean(contactData?.isAdmin || matchedContact?.isAdmin);
+    const isPartner = Boolean(contactData?.isPartner || matchedContact?.isPartner);
+    const isTechnician = Boolean(contactData?.isTechnician || matchedContact?.tipo === 'tecnico' || matchedContact?.isTechnician);
+
+    const defaultTabs: Array<'geral' | 'cliente' | 'checklist' | 'agenda' | 'financeiro' | 'contatos'> = isAdmin
+      ? ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']
+      : isTechnician
+      ? ['checklist', 'agenda', 'cliente']
+      : ['cliente'];
+
+    const allowedTabs: Array<'geral' | 'cliente' | 'checklist' | 'agenda' | 'financeiro' | 'contatos'> = isAdmin
+      ? ['geral', 'cliente', 'checklist', 'agenda', 'financeiro', 'contatos']
+      : (contactData?.allowedNavTabs && contactData.allowedNavTabs.length > 0
+        ? contactData.allowedNavTabs
+        : defaultTabs);
+
+    const role: 'admin' | 'technician' | 'client' = isAdmin ? 'admin' : isTechnician ? 'technician' : 'client';
+
+    const session = {
+      id: matchedContact.guid || matchedContact.id || `usr_${Date.now()}`,
+      name: contactData?.name || matchedContact.nome || 'Usuário Cadastrado',
+      phone: contactData?.phone || matchedContact.telefone || cleanInput,
+      role,
+      isTechnician,
+      isAdmin,
+      isPartner,
+      contactId: matchedContact.guid || matchedContact.id,
+      allowedNavTabs: allowedTabs,
+      loginTimestamp: new Date().toISOString(),
+      token: `auth_usr_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`
+    };
+
+    // Registra log de auditoria
+    try {
+      const pool = getDatabasePool();
+      const connection = await pool.getConnection();
+      await connection.query(
+        `INSERT INTO auditoria_historico (guid, entity_type, entity_id, acao, usuario, resumo, dados_json)
+         VALUES (?, 'auth', ?, 'Login', ?, 'Login realizado com sucesso', ?)`,
+        [
+          `aud_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+          session.id,
+          session.name,
+          JSON.stringify({ phone: session.phone, role: session.role, timestamp: session.loginTimestamp })
+        ]
+      );
+      connection.release();
+    } catch (e) {
+      // Ignora erro de auditoria
+    }
+
+    return {
+      success: true,
+      message: 'Login realizado com sucesso!',
+      session,
+      banco_tipo: 'MySQL Real'
+    };
+
+  } catch (error: any) {
+    console.error('❌ Erro na autenticação via banco de dados:', error);
+    return {
+      success: false,
+      message: 'Erro de comunicação com o banco de dados: ' + (error.message || 'Falha ao autenticar')
+    };
+  }
+}
+
+/**
  * Close all database connections gracefully
  * Call this during server shutdown
  */
@@ -686,4 +904,14 @@ export async function closeDatabaseConnections(): Promise<void> {
   }
 }
 
-export default { getDatabasePool, testDatabaseConnection, getDatabaseStats, closeDatabaseConnections, initializeDatabaseTables, syncBatchData, getTableCounts, fetchRemoteSyncRecords };
+export default { 
+  getDatabasePool, 
+  testDatabaseConnection, 
+  getDatabaseStats, 
+  closeDatabaseConnections, 
+  initializeDatabaseTables, 
+  syncBatchData, 
+  getTableCounts, 
+  fetchRemoteSyncRecords,
+  authenticateUserInDatabase
+};

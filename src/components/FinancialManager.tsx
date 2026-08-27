@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { FinancialRecord, Contact, TechnicalChecklist, ExpenseSupplyItem } from '../types';
 import { storage, exportFinancialsToCsv } from '../utils/storage';
+import { formatCurrency, formatNumberBRL } from '../utils/formatters';
 import { PdfReportModal } from './PdfReportModal';
 
 export const FinancialManager: React.FC = () => {
@@ -238,7 +239,7 @@ export const FinancialManager: React.FC = () => {
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Faturamento Bruto</span>
           <span className="text-xl font-black text-slate-900 block">
-            R$ {totalGross.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            {formatCurrency(totalGross)}
           </span>
           <span className="text-[11px] text-emerald-600 font-semibold">{filteredFinancials.length} atendimentos</span>
         </div>
@@ -247,7 +248,7 @@ export const FinancialManager: React.FC = () => {
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Comissões Técnicos</span>
           <span className="text-xl font-bold text-slate-900 block">
-            - R$ {totalCommissions.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            - {formatCurrency(totalCommissions)}
           </span>
           <span className="text-[11px] text-slate-400">Média 20% a 25%</span>
         </div>
@@ -256,7 +257,7 @@ export const FinancialManager: React.FC = () => {
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Insumos & Despesas</span>
           <span className="text-xl font-bold text-slate-900 block">
-            - R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            - {formatCurrency(totalExpenses)}
           </span>
           <span className="text-[11px] text-slate-400">Água pura, combustível</span>
         </div>
@@ -265,7 +266,7 @@ export const FinancialManager: React.FC = () => {
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Lucro Líquido Real</span>
           <span className="text-xl font-black text-emerald-600 block">
-            R$ {totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            {formatCurrency(totalProfit)}
           </span>
           <span className="text-[11px] text-slate-500 font-medium">
             Margem: <span className="text-emerald-700 font-bold">{totalGross > 0 ? ((totalProfit / totalGross) * 100).toFixed(0) : 0}%</span>
@@ -276,7 +277,7 @@ export const FinancialManager: React.FC = () => {
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Ticket Médio</span>
           <span className="text-xl font-bold text-amber-700 block">
-            R$ {avgTicket.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            {formatCurrency(avgTicket)}
           </span>
           <span className="text-[11px] text-slate-400">Por limpeza solar</span>
         </div>
@@ -337,13 +338,13 @@ export const FinancialManager: React.FC = () => {
                     <td className="p-3 text-slate-700 font-medium">{record.serviceDescription}</td>
                     <td className="p-3 text-center font-bold text-slate-700">{record.moduleCount}</td>
                     <td className="p-3 text-right font-bold text-slate-900">
-                      R$ {record.grossAmount.toFixed(2)}
+                      {formatCurrency(record.grossAmount)}
                     </td>
                     <td className="p-3 text-right font-medium text-amber-700">
-                      - R$ {record.technicianCommission.toFixed(2)}
+                      - {formatCurrency(record.technicianCommission)}
                     </td>
                     <td className="p-3 text-right font-black text-emerald-700">
-                      R$ {record.netAmount.toFixed(2)}
+                      {formatCurrency(record.netAmount)}
                     </td>
                     <td className="p-3 text-center">
                       <button
@@ -457,7 +458,7 @@ export const FinancialManager: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-slate-600 font-medium">{item.unit}</td>
                         <td className="p-2.5 text-right font-bold text-emerald-700">
-                          R$ {item.defaultUnitCost.toFixed(2)}
+                          {formatCurrency(item.defaultUnitCost)}
                         </td>
                         <td className="p-2.5 text-center flex items-center justify-center gap-1">
                           <button
@@ -652,7 +653,7 @@ export const FinancialManager: React.FC = () => {
           <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
             <h3 className="font-bold text-slate-900 text-base">Excluir Lançamento Financeiro?</h3>
             <p className="text-xs text-slate-500">
-              Valor: <strong>R$ {recordToDelete.netAmount.toFixed(2)}</strong> ({recordToDelete.serviceDescription})
+              Valor: <strong>{formatCurrency(recordToDelete.netAmount)}</strong> ({recordToDelete.serviceDescription})
             </p>
             <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-950">
               Esta exclusão será registrada no histórico de auditoria com seu usuário e data/hora.
@@ -693,7 +694,7 @@ export const FinancialManager: React.FC = () => {
           <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
             <h3 className="font-bold text-slate-900 text-base">Excluir Insumo / Despesa?</h3>
             <p className="text-xs text-slate-500">
-              Item: <strong>{itemToDelete.name}</strong> (R$ {itemToDelete.defaultUnitCost.toFixed(2)})
+              Item: <strong>{itemToDelete.name}</strong> ({formatCurrency(itemToDelete.defaultUnitCost)})
             </p>
             <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-950">
               Esta exclusão será registrada no histórico de auditoria.

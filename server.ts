@@ -12,7 +12,8 @@ import {
   initializeDatabaseTables,
   syncBatchData,
   getTableCounts,
-  fetchRemoteSyncRecords
+  fetchRemoteSyncRecords,
+  authenticateUserInDatabase
 } from './src/database';
 
 dotenv.config();
@@ -61,6 +62,37 @@ async function startServer() {
       banco_instalado: dbHealthy,
       usando_mysql_real: dbStats.usando_mysql_real,
     });
+  });
+
+  // ============================================
+  // AUTHENTICATION & LOGIN ENDPOINTS
+  // ============================================
+  app.post(['/api/login', '/api/auth/login', '/start/api/login'], async (req, res) => {
+    try {
+      const { phone, telefone, login, password, senha } = req.body || {};
+      const loginIdentifier = phone || telefone || login || '';
+      const passwordInput = password || senha || '';
+
+      if (!loginIdentifier || !passwordInput) {
+        return res.status(400).json({
+          success: false,
+          message: 'Telefone e senha são obrigatórios para acessar o sistema.'
+        });
+      }
+
+      const authResult = await authenticateUserInDatabase(loginIdentifier, passwordInput);
+      if (authResult.success) {
+        return res.json(authResult);
+      } else {
+        return res.status(401).json(authResult);
+      }
+    } catch (error: any) {
+      console.error('❌ Erro no endpoint de login:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Erro interno ao processar login: ' + (error.message || 'Falha no servidor')
+      });
+    }
   });
 
   // ============================================

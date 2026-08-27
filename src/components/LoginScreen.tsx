@@ -48,7 +48,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   }, []);
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let val = e.target.value.replace(/\D/g, '');
+    const raw = e.target.value;
+    // Allow typing admin or master username directly
+    if (/[a-zA-Z]/.test(raw) && !raw.startsWith('(')) {
+      setPhone(raw.slice(0, 25));
+      if (errorMessage) setErrorMessage('');
+      return;
+    }
+
+    let val = raw.replace(/\D/g, '');
     if (val.length > 11) val = val.slice(0, 11);
 
     // Format phone (XX) XXXXX-XXXX
@@ -71,13 +79,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     if (errorMessage) setErrorMessage('');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setIsLoading(true);
 
-    setTimeout(() => {
-      const res = storage.login(phone, password);
+    try {
+      const res = await storage.login(phone, password);
       setIsLoading(false);
 
       if (res.success && res.session) {
@@ -85,7 +93,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       } else {
         setErrorMessage(res.message || 'Erro ao realizar login. Verifique os dados informados.');
       }
-    }, 250);
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage(err?.message || 'Falha ao processar autenticação.');
+    }
   };
 
   const handleSelectLastUser = () => {

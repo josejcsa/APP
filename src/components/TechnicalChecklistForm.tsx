@@ -20,6 +20,7 @@ import {
   ChevronRight,
   RefreshCw,
   Plus,
+  Minus,
   Lock,
   Cloud,
   FolderCheck,
@@ -32,6 +33,7 @@ import {
 import confetti from 'canvas-confetti';
 import { TechnicalChecklist, Contact, Appointment, SolarServiceItem, ExpenseSupplyItem } from '../types';
 import { storage } from '../utils/storage';
+import { formatCurrency, formatNumberBRL, formatPowerKw, formatPercentGain, parseCurrencyBRL } from '../utils/formatters';
 import { SignaturePad } from './SignaturePad';
 import { notificationService } from '../utils/notifications';
 import { SolarPdfGenerator } from '../utils/pdfGenerator';
@@ -106,11 +108,15 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
   );
 
   const [expenseItemsCatalog] = useState<ExpenseSupplyItem[]>(storage.getExpenseItems());
-  const [selectedExpenses, setSelectedExpenses] = useState<Array<{ id: string; included: boolean }>>(
-    checklistToEdit?.procedure?.selectedExpenses || [
-      { id: 'exp-1', included: true },
-      { id: 'exp-2', included: true },
-      { id: 'exp-4', included: true },
+  const [selectedExpenses, setSelectedExpenses] = useState<Array<{ id: string; included: boolean; quantity: number }>>(
+    checklistToEdit?.procedure?.selectedExpenses?.map((e) => ({
+      id: e.id,
+      included: e.included ?? true,
+      quantity: (e.quantity && e.quantity > 0) ? e.quantity : 1,
+    })) || [
+      { id: 'exp-1', included: true, quantity: 1 },
+      { id: 'exp-2', included: true, quantity: 1 },
+      { id: 'exp-4', included: true, quantity: 1 },
     ]
   );
 
@@ -127,7 +133,7 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
           if (exp.relatedServices && exp.relatedServices.some((title) => selectedServiceTitles.includes(title))) {
             const alreadyExists = next.find((e) => e.id === exp.id);
             if (!alreadyExists) {
-              next.push({ id: exp.id, included: true });
+              next.push({ id: exp.id, included: true, quantity: 1 });
             }
           }
         });
@@ -142,7 +148,7 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
       if (exists) {
         return prev.filter((e) => e.id !== id);
       } else {
-        return [...prev, { id, included: true }];
+        return [...prev, { id, included: true, quantity: 1 }];
       }
     });
   };
@@ -151,6 +157,13 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
     e.stopPropagation();
     setSelectedExpenses((prev) =>
       prev.map((item) => (item.id === id ? { ...item, included: !item.included } : item))
+    );
+  };
+
+  const updateExpenseQuantity = (id: string, qty: number) => {
+    const safeQty = Math.max(1, isNaN(qty) ? 1 : Math.round(qty));
+    setSelectedExpenses((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, quantity: safeQty } : item))
     );
   };
   
@@ -203,7 +216,9 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
   const [techSignData, setTechSignData] = useState(checklistToEdit?.technicianSignature?.dataUrl || '');
   const [techSignName, setTechSignName] = useState(checklistToEdit?.technicianSignature?.signedByName || '');
 
-  const [serviceValue, setServiceValue] = useState(checklistToEdit?.serviceValue || 0);
+  const initialServVal = checklistToEdit?.serviceValue !== undefined ? Math.round(checklistToEdit.serviceValue) : 0;
+  const [serviceValue, setServiceValue] = useState<number>(initialServVal);
+  const [serviceValueDisplay, setServiceValueDisplay] = useState<string>(() => formatNumberBRL(initialServVal));
   const [paymentMethod, setPaymentMethod] = useState<any>(checklistToEdit?.paymentMethod || 'pix');
   const [paymentStatus, setPaymentStatus] = useState<any>(checklistToEdit?.paymentStatus || 'pago');
 
@@ -244,13 +259,14 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
     const travelCostPerKm = tech?.technicianDetails?.travelCostPerKm || 0;
     const travelCostTotal = distanceKm * travelCostPerKm;
 
-    // Add cost of expense items charged "à parte" (included === false)
+    // Add cost of expense items charged "à parte" (included === false) multiplied by quantity
     let additionalExpensesAmount = 0;
     selectedExpenses.forEach((sel) => {
       if (!sel.included) {
         const expItem = expenseItemsCatalog.find((e) => e.id === sel.id);
         if (expItem) {
-          additionalExpensesAmount += expItem.defaultUnitCost;
+          const qty = (sel.quantity && sel.quantity > 0) ? sel.quantity : 1;
+          additionalExpensesAmount += expItem.defaultUnitCost * qty;
         }
       }
     });
@@ -258,9 +274,26 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
     const finalTotalWithTravelAndExpenses = totalCalculatedServicePrice + travelCostTotal + additionalExpensesAmount;
 
     if (!checklistToEdit) {
-      setServiceValue(Number(finalTotalWithTravelAndExpenses.toFixed(2)));
+      // Arredonda para centavos zerados (*,00) conforme padrão monetário e atribui diretamente ao campo e estado
+      const rounded = Math.round(finalTotalWithTravelAndExpenses);
+      setServiceValue(rounded);
+      setServiceValueDisplay(formatNumberBRL(rounded));
     }
   }, [modulesCleanedCount, selectedServices, selectedExpenses, customerId, technicianId, clients, technicians, services, settings, checklistToEdit, expenseItemsCatalog]);
+
+  const handleServiceValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    setServiceValueDisplay(rawVal);
+    const parsed = parseCurrencyBRL(rawVal);
+    setServiceValue(parsed);
+  };
+
+  const handleServiceValueBlur = () => {
+    const parsed = parseCurrencyBRL(serviceValueDisplay);
+    const rounded = Math.round(parsed);
+    setServiceValue(rounded);
+    setServiceValueDisplay(formatNumberBRL(rounded));
+  };
 
   // Auto update technician name when technician changes
   useEffect(() => {
@@ -341,14 +374,13 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
   const handleFinishChecklist = () => {
     const selectedClient = clients.find((c) => c.id === customerId);
     const selectedTech = technicians.find((t) => t.id === technicianId);
-    const travelCostTotal = (selectedClient?.address?.distanceKm || 0) * (selectedTech?.technicianDetails?.travelCostPerKm || 0);
-    const finalServiceValue = Number(serviceValue) + travelCostTotal;
+    const finalServiceValue = Math.round(Number(serviceValue));
 
     // Fallback sample photos if none captured so PDF looks great
     const finalBeforePhotos = beforePhotos.length > 0 ? beforePhotos : [
       {
         id: `p-sample-1`,
-        dataUrl: 'https://images.unsplash.com/photo-1509391365360-2e959784a276?w=600&auto=format&fit=crop&q=80',
+        dataUrl: 'https://www.shutterstock.com/image-photo/closeup-very-dirty-solar-panel-260nw-2644817949.jpg?w=600&auto=format&fit=crop&q=80',
         caption: 'Módulos com sujidade e fuligem acumuladas antes da limpeza.',
         timestamp: new Date().toISOString(),
         category: 'detalhe_sujeira' as const,
@@ -1073,8 +1105,8 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
                       </div>
                       <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">{srv.description}</p>
                       <div className="flex items-center gap-3 mt-1.5 text-[10px] font-semibold text-slate-600">
-                        <span>Base: R$ {srv.basePrice}</span>
-                        {srv.pricePerModule > 0 && <span>+ R$ {srv.pricePerModule}/módulo</span>}
+                        <span>Base: {formatCurrency(srv.basePrice)}</span>
+                        {srv.pricePerModule > 0 && <span>+ {formatCurrency(srv.pricePerModule)}/módulo</span>}
                         {srv.estimatedDurationMinutes > 0 && <span>⏱️ ~{srv.estimatedDurationMinutes}min</span>}
                       </div>
                     </div>
@@ -1144,9 +1176,75 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
                         <p className="text-[11px] text-slate-500 mt-0.5">Fornecedor: {exp.supplier}</p>
                       )}
                       <div className="flex items-center gap-3 mt-1.5 text-[10px] font-semibold text-slate-600">
-                        <span>Custo unitário: R$ {exp.defaultUnitCost.toFixed(2)}</span>
+                        <span>Custo unitário: {formatCurrency(exp.defaultUnitCost)}</span>
                         <span>Unidade: {exp.unit}</span>
                       </div>
+
+                      {isSelected && (
+                        <div
+                          className="mt-2.5 pt-2 border-t border-emerald-200/60 flex flex-wrap items-center justify-between gap-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex items-center space-x-1.5">
+                            <span className="text-[11px] font-bold text-slate-700">Qtd:</span>
+                            <div className="flex items-center bg-white border border-slate-300 rounded-lg shadow-2xs overflow-hidden">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateExpenseQuantity(exp.id, (selObj?.quantity || 1) - 1);
+                                }}
+                                disabled={(selObj?.quantity || 1) <= 1}
+                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40 disabled:hover:bg-slate-100 transition-colors cursor-pointer"
+                                title="Diminuir quantidade"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={selObj?.quantity || 1}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  updateExpenseQuantity(exp.id, isNaN(val) ? 1 : val);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="w-12 text-center text-xs font-bold text-slate-900 border-x border-slate-200 py-0.5 focus:outline-hidden"
+                              />
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateExpenseQuantity(exp.id, (selObj?.quantity || 1) + 1);
+                                }}
+                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                                title="Aumentar quantidade"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <span className="text-[11px] text-slate-600 font-medium">
+                              {exp.unit || 'un'}
+                            </span>
+                          </div>
+
+                          <div className="text-right">
+                            {!isIncluded ? (
+                              <div className="text-[11px] font-bold text-amber-700">
+                                + {formatCurrency(exp.defaultUnitCost * (selObj?.quantity || 1))}
+                                <span className="text-[9px] font-normal text-slate-500 block">
+                                  ({selObj?.quantity || 1} × {formatCurrency(exp.defaultUnitCost)})
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-md">
+                                Incluso no serviço ({selObj?.quantity || 1} {exp.unit || 'un'})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -1252,7 +1350,7 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
               <div className="bg-white/5 p-3.5 rounded-xl border border-white/10">
                 <span className="text-[11px] text-slate-400 block font-medium">Economia Estimada na Conta:</span>
                 <span className="text-xl font-bold text-emerald-400 block mt-0.5">
-                  + R$ {estimatedMonthlySavingsBrl} / mês
+                  + {formatCurrency(estimatedMonthlySavingsBrl)} / mês
                 </span>
                 <span className="text-[10px] text-slate-400">Economia direta do cliente</span>
               </div>
@@ -1371,15 +1469,23 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
             </h4>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Valor do Serviço (R$) *</label>
-                <input
-                  type="number"
-                  step="1"
-                  value={serviceValue}
-                  onChange={(e) => setServiceValue(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:ring-2 focus:ring-amber-400"
-                />
+              <div id="service-value-field-container">
+                <label className="block text-xs font-bold text-slate-700 mb-1">Valor do Serviço *</label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs select-none">
+                    R$
+                  </span>
+                  <input
+                    id="service-value-input"
+                    type="text"
+                    inputMode="decimal"
+                    value={serviceValueDisplay}
+                    onChange={handleServiceValueChange}
+                    onBlur={handleServiceValueBlur}
+                    placeholder="0,00"
+                    className="w-full pl-10 pr-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                  />
+                </div>
               </div>
 
               <div>
@@ -1604,10 +1710,10 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
             `Olá, ${cust.name}! ☀️\n\n` +
             `Seu *Relatório Técnico de Limpeza Solar* está pronto!\n` +
             `📄 *Protocolo:* ${previewChk.protocolNumber}\n` +
-            `⚡ *Potência Antes:* ${previewChk.before.readingKwBefore.toFixed(2)} kW\n` +
-            `🚀 *Potência Depois:* ${previewChk.after.readingKwAfter.toFixed(2)} kW\n` +
-            `📈 *Ganho de Eficiência:* +${previewChk.after.calculatedGainPercent.toFixed(1)}%\n` +
-            `💰 *Economia Estimada:* +R$ ${previewChk.after.estimatedMonthlySavingsBrl?.toFixed(2) || '0.00'}/mês\n\n` +
+            `⚡ *Potência Antes:* ${formatPowerKw(previewChk.before.readingKwBefore)} kW\n` +
+            `🚀 *Potência Depois:* ${formatPowerKw(previewChk.after.readingKwAfter)} kW\n` +
+            `📈 *Ganho de Eficiência:* ${formatPercentGain(previewChk.after.calculatedGainPercent)}\n` +
+            `💰 *Economia Estimada:* +${formatCurrency(previewChk.after.estimatedMonthlySavingsBrl || 0)}/mês\n\n` +
             `Obrigado por confiar na ${settings.tradingName}! Laudo técnico em PDF gerado com sucesso.`
           );
           window.open(`https://api.whatsapp.com/send?phone=55${phoneClean}&text=${message}`, '_blank');

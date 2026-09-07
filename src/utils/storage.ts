@@ -7,6 +7,9 @@ import {
   TechnicalChecklist,
   FinancialRecord,
   FinancialExpense,
+  AccountPayable,
+  AccountReceivable,
+  ReconciliationBatch,
   AppNotification,
   CompanySettings,
   AuditLogEntry,
@@ -23,6 +26,9 @@ const STORAGE_KEYS = {
   APPOINTMENTS: 'elthera_pro_appointments',
   CHECKLISTS: 'elthera_pro_checklists',
   FINANCIALS: 'elthera_pro_financials',
+  ACCOUNTS_PAYABLE: 'elthera_pro_accounts_payable',
+  ACCOUNTS_RECEIVABLE: 'elthera_pro_accounts_receivable',
+  RECONCILIATION_BATCHES: 'elthera_pro_reconciliation_batches',
   NOTIFICATIONS: 'elthera_pro_notifications',
   SETTINGS: 'elthera_pro_settings',
   SYNC_QUEUE: 'elthera_pro_sync_queue',
@@ -226,6 +232,89 @@ export const INITIAL_CHECKLISTS: TechnicalChecklist[] = [];
 export const INITIAL_APPOINTMENTS: Appointment[] = [];
 export const INITIAL_FINANCIALS: FinancialRecord[] = [];
 export const INITIAL_NOTIFICATIONS: AppNotification[] = [];
+
+export const INITIAL_ACCOUNTS_PAYABLE: AccountPayable[] = [
+  {
+    id: 'pay-001',
+    description: 'PIX Técnico - Combustível Rota Visita Navegantes',
+    category: 'combustivel_rota',
+    beneficiary: 'Téc. Almeida Jr.',
+    amount: 67.00,
+    dueDate: new Date().toISOString().slice(0, 10),
+    paymentMethod: 'pix',
+    status: 'pendente',
+    notes: 'Deslocamento ida e volta para atendimento técnico agendado.',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'pay-002',
+    description: 'Depósito Comissão Técnica - Limpeza Solar #SOL-2026-0001',
+    category: 'comissao_tecnico',
+    beneficiary: 'Téc. Almeida Jr.',
+    amount: 95.00,
+    dueDate: new Date().toISOString().slice(0, 10),
+    paymentMethod: 'pix',
+    status: 'pendente',
+    notes: 'Comissão de 20% sobre serviço executado.',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'pay-003',
+    description: 'Aquisição 20L Limpador Fotovoltaico Biodegradável',
+    category: 'insumo_estoque',
+    beneficiary: 'Distribuidora Química Solar SC',
+    amount: 240.00,
+    dueDate: new Date(Date.now() - 86400000 * 2).toISOString().slice(0, 10),
+    paymentDate: new Date(Date.now() - 86400000 * 2).toISOString().slice(0, 10),
+    paymentMethod: 'pix',
+    status: 'pago',
+    documentNumber: 'NF-e 84210',
+    notes: 'Insumo químico neutro para reposição de estoque operacional.',
+    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+  },
+];
+
+export const INITIAL_ACCOUNTS_RECEIVABLE: AccountReceivable[] = [
+  {
+    id: 'rec-001',
+    description: 'PIX Cliente - Limpeza Técnica e Inspeção Solar Residencial',
+    category: 'servico_solar',
+    payerName: 'Residência Silva & Filhos',
+    amount: 475.00,
+    dueDate: new Date().toISOString().slice(0, 10),
+    receiptDate: new Date().toISOString().slice(0, 10),
+    paymentMethod: 'pix',
+    status: 'recebido',
+    notes: 'Pagamento à vista realizado via chave PIX CNPJ.',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'rec-002',
+    description: 'Comissão Parceiro Solar - Indicação Usina Fotovoltaica Comercial',
+    category: 'comissao_parceiro',
+    payerName: 'Renovare Engenharia Solar',
+    amount: 350.00,
+    dueDate: new Date(Date.now() + 86400000 * 3).toISOString().slice(0, 10),
+    paymentMethod: 'pix',
+    status: 'pendente',
+    notes: 'Comissão referente à indicação de cliente para contrato de manutenção anual.',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'rec-003',
+    description: 'Lavagem Especial Usina Solar - Fazenda Boa Esperança',
+    category: 'servico_solar',
+    payerName: 'Agropecuária Boa Esperança',
+    amount: 1400.00,
+    dueDate: new Date(Date.now() + 86400000 * 5).toISOString().slice(0, 10),
+    paymentMethod: 'boleto',
+    status: 'pendente',
+    notes: 'Boleto bancário emitido com vencimento em 5 dias.',
+    createdAt: new Date().toISOString(),
+  },
+];
+
+export const INITIAL_RECONCILIATION_BATCHES: ReconciliationBatch[] = [];
 
 // Storage Helper Engine
 class StorageService {
@@ -1235,6 +1324,263 @@ class StorageService {
     };
 
     this.saveFinancial(financialData);
+  }
+
+  // Contas a Pagar (Accounts Payable)
+  public getAccountsPayable(): AccountPayable[] {
+    return this.get<AccountPayable[]>(STORAGE_KEYS.ACCOUNTS_PAYABLE, INITIAL_ACCOUNTS_PAYABLE);
+  }
+
+  public getAccountPayableById(id: string): AccountPayable | undefined {
+    return this.getAccountsPayable().find((p) => p.id === id || p.guid === id);
+  }
+
+  public saveAccountPayable(item: AccountPayable, user?: string): AccountPayable {
+    const list = this.getAccountsPayable();
+    const guid = item.guid || item.id || OfflineFirstService.generateUUID();
+    const index = list.findIndex((p) => p.id === item.id || p.guid === guid);
+    const settings = this.getSettings();
+    const operator = user || settings.currentUser || 'Administrador Elthera';
+
+    const preparedItem: AccountPayable = {
+      ...item,
+      id: item.id || guid,
+      guid: guid,
+      sincronizado: false,
+      updatedAt: new Date().toISOString(),
+    };
+
+    let updatedList: AccountPayable[];
+    if (index >= 0) {
+      updatedList = [...list];
+      updatedList[index] = preparedItem;
+      this.addAuditLog({
+        entityType: 'financial',
+        entityId: preparedItem.id,
+        action: 'Edição',
+        user: operator,
+        summary: `Conta a Pagar "${preparedItem.description}" atualizada (${formatCurrency(preparedItem.amount)})`,
+      });
+    } else {
+      updatedList = [preparedItem, ...list];
+      this.addAuditLog({
+        entityType: 'financial',
+        entityId: preparedItem.id,
+        action: 'Criação',
+        user: operator,
+        summary: `Nova Conta a Pagar "${preparedItem.description}" cadastrada (${formatCurrency(preparedItem.amount)})`,
+      });
+    }
+
+    this.set(STORAGE_KEYS.ACCOUNTS_PAYABLE, updatedList);
+    OfflineFirstService.salvarItem('financial', preparedItem);
+    return preparedItem;
+  }
+
+  public deleteAccountPayable(id: string, user?: string, reason?: string): void {
+    const item = this.getAccountPayableById(id);
+    const guid = item?.guid || id;
+    const list = this.getAccountsPayable().filter((p) => p.id !== id && p.guid !== id && p.guid !== guid);
+    this.set(STORAGE_KEYS.ACCOUNTS_PAYABLE, list);
+
+    const settings = this.getSettings();
+    const operator = user || settings.currentUser || 'Administrador Elthera';
+
+    this.addAuditLog({
+      entityType: 'financial',
+      entityId: id,
+      action: 'Exclusão',
+      user: operator,
+      summary: `Conta a Pagar "${item?.description || id}" foi excluída. Motivo: ${reason || 'Não informado'}`,
+      details: reason,
+    });
+
+    this.addDeletedGuid(id);
+    if (guid && guid !== id) this.addDeletedGuid(guid);
+    OfflineFirstService.removerItem('financial', guid, undefined, reason);
+  }
+
+  // Contas a Receber (Accounts Receivable)
+  public getAccountsReceivable(): AccountReceivable[] {
+    return this.get<AccountReceivable[]>(STORAGE_KEYS.ACCOUNTS_RECEIVABLE, INITIAL_ACCOUNTS_RECEIVABLE);
+  }
+
+  public getAccountReceivableById(id: string): AccountReceivable | undefined {
+    return this.getAccountsReceivable().find((r) => r.id === id || r.guid === id);
+  }
+
+  public saveAccountReceivable(item: AccountReceivable, user?: string): AccountReceivable {
+    const list = this.getAccountsReceivable();
+    const guid = item.guid || item.id || OfflineFirstService.generateUUID();
+    const index = list.findIndex((r) => r.id === item.id || r.guid === guid);
+    const settings = this.getSettings();
+    const operator = user || settings.currentUser || 'Administrador Elthera';
+
+    const preparedItem: AccountReceivable = {
+      ...item,
+      id: item.id || guid,
+      guid: guid,
+      sincronizado: false,
+      updatedAt: new Date().toISOString(),
+    };
+
+    let updatedList: AccountReceivable[];
+    if (index >= 0) {
+      updatedList = [...list];
+      updatedList[index] = preparedItem;
+      this.addAuditLog({
+        entityType: 'financial',
+        entityId: preparedItem.id,
+        action: 'Edição',
+        user: operator,
+        summary: `Conta a Receber "${preparedItem.description}" atualizada (${formatCurrency(preparedItem.amount)})`,
+      });
+    } else {
+      updatedList = [preparedItem, ...list];
+      this.addAuditLog({
+        entityType: 'financial',
+        entityId: preparedItem.id,
+        action: 'Criação',
+        user: operator,
+        summary: `Nova Conta a Receber "${preparedItem.description}" cadastrada (${formatCurrency(preparedItem.amount)})`,
+      });
+    }
+
+    this.set(STORAGE_KEYS.ACCOUNTS_RECEIVABLE, updatedList);
+    OfflineFirstService.salvarItem('financial', preparedItem);
+    return preparedItem;
+  }
+
+  public deleteAccountReceivable(id: string, user?: string, reason?: string): void {
+    const item = this.getAccountReceivableById(id);
+    const guid = item?.guid || id;
+    const list = this.getAccountsReceivable().filter((r) => r.id !== id && r.guid !== id && r.guid !== guid);
+    this.set(STORAGE_KEYS.ACCOUNTS_RECEIVABLE, list);
+
+    const settings = this.getSettings();
+    const operator = user || settings.currentUser || 'Administrador Elthera';
+
+    this.addAuditLog({
+      entityType: 'financial',
+      entityId: id,
+      action: 'Exclusão',
+      user: operator,
+      summary: `Conta a Receber "${item?.description || id}" foi excluída. Motivo: ${reason || 'Não informado'}`,
+      details: reason,
+    });
+
+    this.addDeletedGuid(id);
+    if (guid && guid !== id) this.addDeletedGuid(guid);
+    OfflineFirstService.removerItem('financial', guid, undefined, reason);
+  }
+
+  // Encontro de Contas (Reconciliation Batches)
+  public getReconciliationBatches(): ReconciliationBatch[] {
+    return this.get<ReconciliationBatch[]>(STORAGE_KEYS.RECONCILIATION_BATCHES, INITIAL_RECONCILIATION_BATCHES);
+  }
+
+  public saveReconciliationBatch(batch: ReconciliationBatch, user?: string): ReconciliationBatch {
+    const batches = this.getReconciliationBatches();
+    const settings = this.getSettings();
+    const operator = user || settings.currentUser || 'Administrador Elthera';
+
+    // Mark accounts payable items as reconciled
+    const payables = this.getAccountsPayable();
+    const updatedPayables = payables.map((p) => {
+      if (batch.payableItemIds.includes(p.id) || (p.guid && batch.payableItemIds.includes(p.guid))) {
+        return {
+          ...p,
+          status: 'pago' as const,
+          paymentDate: p.paymentDate || batch.date,
+          reconciled: true,
+          reconciliationBatchId: batch.id,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return p;
+    });
+    this.set(STORAGE_KEYS.ACCOUNTS_PAYABLE, updatedPayables);
+
+    // Mark accounts receivable items as reconciled
+    const receivables = this.getAccountsReceivable();
+    const updatedReceivables = receivables.map((r) => {
+      if (batch.receivableItemIds.includes(r.id) || (r.guid && batch.receivableItemIds.includes(r.guid))) {
+        return {
+          ...r,
+          status: 'recebido' as const,
+          receiptDate: r.receiptDate || batch.date,
+          reconciled: true,
+          reconciliationBatchId: batch.id,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return r;
+    });
+    this.set(STORAGE_KEYS.ACCOUNTS_RECEIVABLE, updatedReceivables);
+
+    const updatedBatches = [batch, ...batches];
+    this.set(STORAGE_KEYS.RECONCILIATION_BATCHES, updatedBatches);
+
+    this.addAuditLog({
+      entityType: 'financial',
+      entityId: batch.id,
+      action: 'Criação',
+      user: operator,
+      summary: `Encontro de Contas realizado #${batch.batchCode}: ${batch.receivableItemIds.length} receitas e ${batch.payableItemIds.length} despesas compensadas (Saldo Líquido: ${formatCurrency(batch.netBalance)})`,
+    });
+
+    return batch;
+  }
+
+  public undoReconciliationBatch(batchId: string, user?: string): void {
+    const batches = this.getReconciliationBatches();
+    const target = batches.find((b) => b.id === batchId);
+    if (!target) return;
+
+    const settings = this.getSettings();
+    const operator = user || settings.currentUser || 'Administrador Elthera';
+
+    // Unmark payables
+    const payables = this.getAccountsPayable();
+    const updatedPayables = payables.map((p) => {
+      if (p.reconciliationBatchId === batchId) {
+        return {
+          ...p,
+          reconciled: false,
+          reconciliationBatchId: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return p;
+    });
+    this.set(STORAGE_KEYS.ACCOUNTS_PAYABLE, updatedPayables);
+
+    // Unmark receivables
+    const receivables = this.getAccountsReceivable();
+    const updatedReceivables = receivables.map((r) => {
+      if (r.reconciliationBatchId === batchId) {
+        return {
+          ...r,
+          reconciled: false,
+          reconciliationBatchId: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return r;
+    });
+    this.set(STORAGE_KEYS.ACCOUNTS_RECEIVABLE, updatedReceivables);
+
+    // Remove batch
+    const remainingBatches = batches.filter((b) => b.id !== batchId);
+    this.set(STORAGE_KEYS.RECONCILIATION_BATCHES, remainingBatches);
+
+    this.addAuditLog({
+      entityType: 'financial',
+      entityId: batchId,
+      action: 'Exclusão',
+      user: operator,
+      summary: `Estorno do Encontro de Contas #${target.batchCode}. Títulos desvinculados com sucesso.`,
+    });
   }
 
   // Notifications

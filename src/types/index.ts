@@ -240,6 +240,67 @@ export interface FinancialExpense {
   date: string;
 }
 
+export type PaymentStatusAP = 'pendente' | 'pago' | 'atrasado' | 'cancelado';
+export type PaymentStatusAR = 'pendente' | 'recebido' | 'atrasado' | 'cancelado';
+
+export interface AccountPayable extends BaseOfflineEntity {
+  id: string;
+  description: string;
+  category: 'combustivel_rota' | 'comissao_tecnico' | 'insumo_estoque' | 'alimentacao' | 'ferramenta_epi' | 'manutencao' | 'imposto' | 'outro';
+  beneficiary: string; // Nome do favorecido (técnico, fornecedor, posto, etc.)
+  technicianId?: string;
+  amount: number;
+  dueDate: string; // YYYY-MM-DD
+  paymentDate?: string; // YYYY-MM-DD
+  paymentMethod: 'pix' | 'boleto' | 'transferencia' | 'cartao_credito' | 'cartao_debito' | 'dinheiro';
+  status: PaymentStatusAP;
+  appointmentId?: string;
+  checklistId?: string;
+  documentNumber?: string;
+  reconciled?: boolean; // Se participou de encontro de contas
+  reconciliationBatchId?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface AccountReceivable extends BaseOfflineEntity {
+  id: string;
+  description: string;
+  category: 'servico_solar' | 'comissao_parceiro' | 'venda_produtos' | 'manutencao_avulsa' | 'consultoria' | 'outro';
+  payerName: string; // Nome do sacado / cliente / parceiro
+  customerId?: string;
+  amount: number;
+  dueDate: string; // YYYY-MM-DD
+  receiptDate?: string; // YYYY-MM-DD
+  paymentMethod: 'pix' | 'cartao_credito' | 'cartao_debito' | 'boleto' | 'transferencia' | 'dinheiro';
+  status: PaymentStatusAR;
+  appointmentId?: string;
+  checklistId?: string;
+  documentNumber?: string;
+  reconciled?: boolean; // Se participou de encontro de contas
+  reconciliationBatchId?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ReconciliationBatch extends BaseOfflineEntity {
+  id: string;
+  batchCode: string; // Ex: ENC-2026-0001
+  title: string;
+  date: string; // YYYY-MM-DD
+  payableItemIds: string[];
+  receivableItemIds: string[];
+  totalPayable: number;
+  totalReceivable: number;
+  netBalance: number; // totalReceivable - totalPayable (positivo: superavit a receber, negativo: deficit a pagar)
+  settlementMethod?: 'compensacao_total' | 'pix_diferenca' | 'credito_futuro' | 'outro';
+  notes?: string;
+  operator: string;
+  createdAt: string;
+}
+
 export interface FinancialRecord extends BaseOfflineEntity {
   id: string;
   checklistId?: string;

@@ -10,7 +10,6 @@
 
 import { storage } from './storage';
 import { OfflineFirstService } from './offlineFirstService';
-import { PhpSyncService } from './phpSyncService';
 import { InspectionPhoto } from '../types';
 
 export interface UploadImageResult {

@@ -29,6 +29,53 @@ import { storage } from '../utils/storage';
 import { notificationService } from '../utils/notifications';
 import { formatCurrency, formatNumberBRL } from '../utils/formatters';
 
+/**
+ * Calcula o custo da rota de ida e volta do técnico para o cliente.
+ * Base de cálculo: distância registrada no cadastro do cliente (km) x 2 (ida e volta)
+ * multiplicado pelo custo de combustível do técnico (R$/km).
+ */
+export const calculateTechnicianRouteCost = (
+  customer?: Contact | null,
+  technician?: Contact | null
+) => {
+  const distanceOneWay = Number(customer?.address?.distanceKm || 0);
+  const roundTripKm = Math.round(distanceOneWay * 2 * 10) / 10; // ida e volta
+
+  // Custo de combustível do técnico:
+  // 1. travelCostPerKm (R$/km) se configurado
+  // 2. fuelPricePerLiter / carFuelEconomyKmPerLiter se ambos configurados
+  // 3. fuelPricePerLiter / 10 como estimativa padrão
+  // 4. fallback padrão de 0.67 R$/km (padrão 6.70 / 10)
+  let fuelCostPerKm = 0;
+  if (technician?.technicianDetails) {
+    const tech = technician.technicianDetails;
+    if (typeof tech.travelCostPerKm === 'number' && tech.travelCostPerKm > 0) {
+      fuelCostPerKm = tech.travelCostPerKm;
+    } else if (
+      typeof tech.fuelPricePerLiter === 'number' &&
+      typeof tech.carFuelEconomyKmPerLiter === 'number' &&
+      tech.carFuelEconomyKmPerLiter > 0
+    ) {
+      fuelCostPerKm = tech.fuelPricePerLiter / tech.carFuelEconomyKmPerLiter;
+    } else if (typeof tech.fuelPricePerLiter === 'number' && tech.fuelPricePerLiter > 0) {
+      fuelCostPerKm = tech.fuelPricePerLiter / 10;
+    }
+  }
+
+  if (fuelCostPerKm <= 0) {
+    fuelCostPerKm = 0.67;
+  }
+
+  const totalRouteCost = Math.round(roundTripKm * fuelCostPerKm * 100) / 100;
+
+  return {
+    distanceOneWay,
+    roundTripKm,
+    fuelCostPerKm,
+    totalRouteCost,
+  };
+};
+
 interface AppointmentsManagerProps {
   onStartChecklist: (appointmentId: string, customerId: string) => void;
   onEditChecklist?: (checklist: TechnicalChecklist) => void;
@@ -65,7 +112,6 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
   const [newDuration, setNewDuration] = useState(120);
   const [newSelectedServices, setNewSelectedServices] = useState<string[]>(['srv-1']);
   const [newNotes, setNewNotes] = useState('');
-  const [newAmount, setNewAmount] = useState(450);
 
   // Edit Appointment Form State
   const [editCustomerId, setEditCustomerId] = useState('');
@@ -75,7 +121,6 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
   const [editDuration, setEditDuration] = useState(120);
   const [editSelectedServices, setEditSelectedServices] = useState<string[]>([]);
   const [editNotes, setEditNotes] = useState('');
-  const [editAmount, setEditAmount] = useState(0);
   const [editStatus, setEditStatus] = useState<any>('agendado');
 
   const refreshList = () => {
@@ -107,7 +152,6 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
     setEditDuration(apt.estimatedDurationMinutes || 90);
     setEditSelectedServices(apt.serviceIds && apt.serviceIds.length > 0 ? apt.serviceIds : ['srv-1']);
     setEditNotes(apt.notes || '');
-    setEditAmount(apt.totalAmount || 0);
     setEditStatus(apt.status);
     setIsEditModalOpen(true);
   };
@@ -119,6 +163,8 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
 
     if (!customer || !technician) return;
 
+    const route = calculateTechnicianRouteCost(customer, technician);
+
     const newApt: Appointment = {
       id: `apt-${Date.now()}`,
       customerId: newCustomerId,
@@ -129,7 +175,7 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
       scheduledTime: newTime,
       estimatedDurationMinutes: Number(newDuration),
       notes: newNotes,
-      totalAmount: Number(newAmount),
+      totalAmount: route.totalRouteCost,
       notificationSent: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -141,10 +187,10 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
     // Automatically open Google Calendar event creation for this new appointment
     openGoogleCalendarAdd(saved);
 
-    // Trigger push notification to technician
+    // Trigger push notification to technician with route cost
     notificationService.notifyTechnician(
       `📅 Novo Agendamento: ${customer.name}`,
-      `Atendimento agendado para ${newDate.split('-').reverse().join('/')} às ${newTime}. Técnico: ${technician.name}.`,
+      `Atendimento agendado para ${newDate.split('-').reverse().join('/')} às ${newTime}. Técnico: ${technician.name}. Custo da rota (ida/volta): ${formatCurrency(route.totalRouteCost)}.`,
       { appointmentId: saved.id, customerId: customer.id, priority: 'media' }
     );
 
@@ -161,6 +207,8 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
 
     if (!customer || !technician) return;
 
+    const route = calculateTechnicianRouteCost(customer, technician);
+
     const updatedApt: Appointment = {
       ...editingAppointment,
       customerId: editCustomerId,
@@ -170,7 +218,7 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
       estimatedDurationMinutes: Number(editDuration),
       serviceIds: editSelectedServices,
       notes: editNotes,
-      totalAmount: Number(editAmount),
+      totalAmount: route.totalRouteCost,
       status: editStatus,
       updatedAt: new Date().toISOString(),
     };
@@ -206,13 +254,15 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
   const openGoogleCalendarAdd = (apt: Appointment) => {
     const customer = clients.find((c) => c.id === apt.customerId);
     const technician = technicians.find((t) => t.id === apt.technicianId);
+    const route = calculateTechnicianRouteCost(customer, technician);
+
     const title = encodeURIComponent(`Visita Técnica: ${customer?.name || 'Cliente'} (${technician?.name || 'Técnico'})`);
     const details = encodeURIComponent(
       `Serviço de Limpeza e Manutenção Solar\n` +
-      `Cliente: ${customer?.name}\n` +
-      `Endereço: ${customer?.address?.street}, ${customer?.address?.number} - ${customer?.address?.city}\n` +
-      `Técnico Responsável: ${technician?.name} (${technician?.email || ''})\n` +
-      `Valor: ${formatCurrency(apt.totalAmount)}\n` +
+      `Cliente: ${customer?.name || ''}\n` +
+      `Endereço: ${customer?.address?.street || ''}, ${customer?.address?.number || ''} - ${customer?.address?.city || ''}\n` +
+      `Técnico Responsável: ${technician?.name || ''} (${technician?.email || ''})\n` +
+      `Custo da Rota: ${formatCurrency(route.totalRouteCost)} (${route.roundTripKm} km - Ida e Volta)\n` +
       `Observações: ${apt.notes || 'Nenhuma'}`
     );
     const location = encodeURIComponent(customer?.address ? `${customer.address.street}, ${customer.address.number} - ${customer.address.city}/${customer.address.state}` : 'Brasil');
@@ -447,9 +497,24 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                       </span>
                     </p>
                   )}
-                  <p className="text-[11px] text-slate-900 font-bold pt-1 border-t border-slate-200">
-                    Valor Estimado: <span className="text-emerald-600">{formatCurrency(apt.totalAmount)}</span>
-                  </p>
+                  {(() => {
+                    const route = calculateTechnicianRouteCost(customer, technician);
+                    return (
+                      <div className="pt-1.5 border-t border-slate-200 space-y-0.5">
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="text-slate-600 font-semibold">Custo da Rota (Ida/Volta):</span>
+                          <span className="font-black text-emerald-700">
+                            {formatCurrency(route.totalRouteCost)}
+                            {route.roundTripKm > 0 && (
+                              <span className="text-[10px] text-slate-400 font-normal ml-1">
+                                ({route.roundTripKm} km)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Action Buttons */}
@@ -579,13 +644,7 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                 ) : (
                   <select
                     value={newCustomerId}
-                    onChange={(e) => {
-                      setNewCustomerId(e.target.value);
-                      const sel = clients.find((c) => c.id === e.target.value);
-                      if (sel?.solarSystem?.moduleCount) {
-                        setNewAmount(180 + sel.solarSystem.moduleCount * 16);
-                      }
-                    }}
+                    onChange={(e) => setNewCustomerId(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-slate-800"
                     required
                   >
@@ -643,26 +702,37 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Duração (minutos)</label>
-                  <input
-                    type="number"
-                    value={newDuration}
-                    onChange={(e) => setNewDuration(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Valor Estimado (R$)</label>
-                  <input
-                    type="number"
-                    value={newAmount}
-                    onChange={(e) => setNewAmount(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-bold text-slate-900"
-                  />
-                </div>
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Duração Estimada (minutos)</label>
+                <input
+                  type="number"
+                  value={newDuration}
+                  onChange={(e) => setNewDuration(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800"
+                  min={15}
+                  step={15}
+                />
               </div>
+
+              {/* Route Cost indicator based on selected client distance and technician fuel */}
+              {(() => {
+                const selClient = clients.find((c) => c.id === newCustomerId);
+                const selTech = technicians.find((t) => t.id === newTechnicianId);
+                const route = calculateTechnicianRouteCost(selClient, selTech);
+                return (
+                  <div className="p-3 bg-amber-50/90 border border-amber-200/90 rounded-xl text-xs flex items-center justify-between text-amber-950">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="font-bold">🚗 Custo da Rota (Ida e Volta):</span>
+                      <span className="text-slate-600 text-[11px]">
+                        {route.distanceOneWay} km ida ({route.roundTripKm} km total)
+                      </span>
+                    </div>
+                    <span className="font-black text-emerald-800 text-sm">
+                      {formatCurrency(route.totalRouteCost)}
+                    </span>
+                  </div>
+                );
+              })()}
 
               {/* Services Multi-Select */}
               <div>
@@ -816,23 +886,16 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Duração (minutos)</label>
+                  <label className="block font-bold text-slate-700 mb-1">Duração Estimada (minutos)</label>
                   <input
                     type="number"
                     value={editDuration}
                     onChange={(e) => setEditDuration(Number(e.target.value))}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Valor Total (R$)</label>
-                  <input
-                    type="number"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-bold text-slate-900"
+                    min={15}
+                    step={15}
                   />
                 </div>
                 <div>
@@ -849,6 +912,26 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                   </select>
                 </div>
               </div>
+
+              {/* Route Cost indicator based on selected client distance and technician fuel */}
+              {(() => {
+                const selClient = clients.find((c) => c.id === editCustomerId);
+                const selTech = technicians.find((t) => t.id === editTechnicianId);
+                const route = calculateTechnicianRouteCost(selClient, selTech);
+                return (
+                  <div className="p-3 bg-amber-50/90 border border-amber-200/90 rounded-xl text-xs flex items-center justify-between text-amber-950">
+                    <div className="flex items-center space-x-1.5">
+                      <span className="font-bold">🚗 Custo da Rota (Ida e Volta):</span>
+                      <span className="text-slate-600 text-[11px]">
+                        {route.distanceOneWay} km ida ({route.roundTripKm} km total)
+                      </span>
+                    </div>
+                    <span className="font-black text-emerald-800 text-sm">
+                      {formatCurrency(route.totalRouteCost)}
+                    </span>
+                  </div>
+                );
+              })()}
 
               {/* Services Multi-Select */}
               <div>

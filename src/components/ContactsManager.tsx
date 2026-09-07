@@ -1171,20 +1171,36 @@ export const ContactsManager: React.FC<ContactsManagerProps> = ({
                 </div>
               </div>
 
-              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 transition-colors font-medium"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-amber-400 hover:bg-amber-500 text-amber-950 rounded-xl font-bold transition-all shadow-xs shadow-amber-200"
-                >
-                  Salvar Cadastro
-                </button>
+              <div className="flex justify-between items-center space-x-2 pt-3 border-t border-slate-100">
+                {editingContact ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDelete(editingContact.id);
+                      setIsModalOpen(false);
+                      setEditingContact(null);
+                    }}
+                    className="px-3.5 py-2 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl font-bold text-xs flex items-center space-x-1.5 cursor-pointer shadow-xs transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Excluir Cadastro</span>
+                  </button>
+                ) : <div />}
+                <div className="flex space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 transition-colors font-medium cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-amber-400 hover:bg-amber-500 text-amber-950 rounded-xl font-bold transition-all shadow-xs shadow-amber-200 cursor-pointer"
+                  >
+                    Salvar Cadastro
+                  </button>
+                </div>
               </div>
             </form>
           </div>

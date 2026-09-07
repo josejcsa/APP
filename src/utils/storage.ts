@@ -30,6 +30,7 @@ const STORAGE_KEYS = {
   AUDIT_LOGS: 'elthera_audit_logs',
   AUTH_SESSION: 'elthera_auth_session',
   LAST_LOGGED_USER: 'elthera_last_logged_user',
+  DELETED_GUIDS: 'elthera_pro_deleted_guids',
 };
 
 export const ALL_NAV_TABS: { id: NavTabId; label: string; description: string }[] = [
@@ -608,6 +609,32 @@ class StorageService {
     });
   }
 
+  // Deleted records tracking (Tombstones para sincronização e proteção contra ressuscitação)
+  public getDeletedGuids(): string[] {
+    return this.get<string[]>(STORAGE_KEYS.DELETED_GUIDS, []);
+  }
+
+  public addDeletedGuid(guid: string): void {
+    if (!guid) return;
+    const current = this.getDeletedGuids();
+    if (!current.includes(guid)) {
+      current.push(guid);
+      this.set(STORAGE_KEYS.DELETED_GUIDS, current.slice(-300));
+    }
+  }
+
+  public isGuidDeleted(guid: string): boolean {
+    if (!guid) return false;
+    const current = this.getDeletedGuids();
+    return current.includes(guid);
+  }
+
+  public removeDeletedGuid(guid: string): void {
+    if (!guid) return;
+    const current = this.getDeletedGuids().filter((g) => g !== guid);
+    this.set(STORAGE_KEYS.DELETED_GUIDS, current);
+  }
+
   public getClients(): Contact[] {
     return this.getContacts().filter((c) => !c.isTechnician);
   }
@@ -727,7 +754,8 @@ class StorageService {
 
   public deleteContact(id: string, user?: string, reason?: string): void {
     const contact = this.getContactById(id);
-    const contacts = this.getContacts().filter((c) => c.id !== id && c.guid !== id);
+    const guid = contact?.guid || id;
+    const contacts = this.getContacts().filter((c) => c.id !== id && c.guid !== id && c.guid !== guid);
     this.set(STORAGE_KEYS.CONTACTS, contacts);
 
     const settings = this.getSettings();
@@ -741,7 +769,10 @@ class StorageService {
       summary: `${contact?.isTechnician ? 'Técnico' : 'Cliente'} "${contact?.name || id}" excluído do sistema. ${reason ? `Motivo: ${reason}` : ''}`,
     });
 
-    this.addToSyncQueue({ type: 'contact', action: 'delete', data: { id, guid: contact?.guid || id, name: contact?.name } });
+    this.addDeletedGuid(id);
+    if (guid && guid !== id) this.addDeletedGuid(guid);
+    OfflineFirstService.removerItem('contact', guid, undefined, reason);
+    this.addToSyncQueue({ type: 'contact', action: 'delete', data: { id, guid, name: contact?.name, action: 'delete', reason } });
   }
 
   // Services
@@ -763,6 +794,27 @@ class StorageService {
       services.push({ ...service, id: service.id || `srv-${Date.now()}` });
     }
     this.set(STORAGE_KEYS.SERVICES, services);
+  }
+
+  public deleteService(id: string, user?: string, reason?: string): void {
+    const service = this.getServices().find((s) => s.id === id);
+    const services = this.getServices().filter((s) => s.id !== id);
+    this.set(STORAGE_KEYS.SERVICES, services);
+
+    const settings = this.getSettings();
+    const operator = user || settings.currentUser || 'Administrador Elthera';
+
+    this.addAuditLog({
+      entityType: 'settings',
+      entityId: id,
+      action: 'Exclusão',
+      user: operator,
+      summary: `Serviço "${service?.title || id}" excluído. ${reason ? `Motivo: ${reason}` : ''}`,
+    });
+
+    this.addDeletedGuid(id);
+    OfflineFirstService.removerItem('service', id, undefined, reason);
+    this.addToSyncQueue({ type: 'service', action: 'delete', data: { id, guid: id, title: service?.title, action: 'delete', reason } });
   }
 
   // Expense & Supply Items (Insumos e Despesas)
@@ -802,7 +854,9 @@ class StorageService {
       summary: `Insumo/Despesa "${item?.name || id}" excluído. ${reason ? `Motivo: ${reason}` : ''}`,
     });
 
-    this.addToSyncQueue({ type: 'expenseItem', action: 'delete', data: { id, name: item?.name } });
+    this.addDeletedGuid(id);
+    OfflineFirstService.removerItem('financial', id, undefined, reason);
+    this.addToSyncQueue({ type: 'expenseItem', action: 'delete', data: { id, guid: id, name: item?.name, action: 'delete', reason } });
   }
 
   // Appointments
@@ -869,8 +923,9 @@ class StorageService {
 
   public deleteAppointment(id: string, user?: string, reason?: string): void {
     const apt = this.getAppointmentById(id);
+    const guid = apt?.guid || id;
     const customer = apt ? this.getContactById(apt.customerId) : undefined;
-    const appointments = this.getAppointments().filter((a) => a.id !== id && a.guid !== id);
+    const appointments = this.getAppointments().filter((a) => a.id !== id && a.guid !== id && a.guid !== guid);
     this.set(STORAGE_KEYS.APPOINTMENTS, appointments);
 
     const settings = this.getSettings();
@@ -884,7 +939,10 @@ class StorageService {
       summary: `Agendamento de ${customer?.name || 'Cliente'} em ${apt?.scheduledDate || ''} excluído. ${reason ? `Motivo: ${reason}` : ''}`,
     });
 
-    this.addToSyncQueue({ type: 'appointment', action: 'delete', data: { id, guid: apt?.guid || id } });
+    this.addDeletedGuid(id);
+    if (guid && guid !== id) this.addDeletedGuid(guid);
+    OfflineFirstService.removerItem('appointment', guid, undefined, reason);
+    this.addToSyncQueue({ type: 'appointment', action: 'delete', data: { id, guid, action: 'delete', reason } });
   }
 
   // Checklists (Before & After)
@@ -999,8 +1057,9 @@ class StorageService {
 
   public deleteChecklist(id: string, user?: string, reason?: string): void {
     const chk = this.getChecklistById(id);
+    const guid = chk?.guid || id;
     const customer = chk ? this.getContactById(chk.customerId) : undefined;
-    const checklists = this.getChecklists().filter((c) => c.id !== id && c.guid !== id);
+    const checklists = this.getChecklists().filter((c) => c.id !== id && c.guid !== id && c.guid !== guid);
     this.set(STORAGE_KEYS.CHECKLISTS, checklists);
 
     const settings = this.getSettings();
@@ -1016,7 +1075,7 @@ class StorageService {
 
     if (chk?.appointmentId) {
       const apt = this.getAppointmentById(chk.appointmentId);
-      if (apt && apt.checklistId === id) {
+      if (apt && (apt.checklistId === id || apt.checklistId === guid)) {
         apt.checklistId = undefined;
         apt.status = 'agendado';
         this.saveAppointment(apt, operator);
@@ -1024,12 +1083,15 @@ class StorageService {
     }
 
     const financials = this.getFinancials();
-    const linkedFin = financials.find((f) => f.checklistId === id);
+    const linkedFin = financials.find((f) => f.checklistId === id || (guid && f.checklistId === guid));
     if (linkedFin) {
       this.deleteFinancial(linkedFin.id, operator, `Checklist vinculado #${chk?.protocolNumber} foi excluído`);
     }
 
-    this.addToSyncQueue({ type: 'checklist', action: 'delete', data: { id, guid: chk?.guid || id, protocolNumber: chk?.protocolNumber } });
+    this.addDeletedGuid(id);
+    if (guid && guid !== id) this.addDeletedGuid(guid);
+    OfflineFirstService.removerItem('checklist', guid, undefined, reason);
+    this.addToSyncQueue({ type: 'checklist', action: 'delete', data: { id, guid, protocolNumber: chk?.protocolNumber, action: 'delete', reason } });
   }
 
   // Financial Control
@@ -1094,8 +1156,9 @@ class StorageService {
 
   public deleteFinancial(id: string, user?: string, reason?: string): void {
     const fin = this.getFinancialById(id);
+    const guid = fin?.guid || id;
     const customer = fin ? this.getContactById(fin.customerId) : undefined;
-    const records = this.getFinancials().filter((f) => f.id !== id && f.guid !== id);
+    const records = this.getFinancials().filter((f) => f.id !== id && f.guid !== id && f.guid !== guid);
     this.set(STORAGE_KEYS.FINANCIALS, records);
 
     const settings = this.getSettings();
@@ -1109,7 +1172,10 @@ class StorageService {
       summary: `Registro financeiro de ${customer?.name || 'Cliente'} (${formatCurrency(fin?.grossAmount || 0)}) excluído. ${reason ? `Motivo: ${reason}` : ''}`,
     });
 
-    this.addToSyncQueue({ type: 'financial', action: 'delete', data: { id, guid: fin?.guid || id } });
+    this.addDeletedGuid(id);
+    if (guid && guid !== id) this.addDeletedGuid(guid);
+    OfflineFirstService.removerItem('financial', guid, undefined, reason);
+    this.addToSyncQueue({ type: 'financial', action: 'delete', data: { id, guid, action: 'delete', reason } });
   }
 
   public syncFinancialFromChecklist(checklist: TechnicalChecklist): void {
@@ -1196,6 +1262,15 @@ class StorageService {
   public markAllNotificationsAsRead(): void {
     const list = this.getNotifications().map((n) => ({ ...n, read: true }));
     this.set(STORAGE_KEYS.NOTIFICATIONS, list);
+  }
+
+  public deleteNotification(id: string): void {
+    const list = this.getNotifications().filter((n) => n.id !== id);
+    this.set(STORAGE_KEYS.NOTIFICATIONS, list);
+  }
+
+  public clearNotifications(): void {
+    this.set(STORAGE_KEYS.NOTIFICATIONS, []);
   }
 
   // Settings

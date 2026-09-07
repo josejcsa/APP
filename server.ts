@@ -13,7 +13,8 @@ import {
   syncBatchData,
   getTableCounts,
   fetchRemoteSyncRecords,
-  authenticateUserInDatabase
+  authenticateUserInDatabase,
+  deleteRecordFromDatabase
 } from './src/database';
 
 dotenv.config();
@@ -292,6 +293,62 @@ async function startServer() {
         success: false,
         message: 'Erro ao sincronizar dados: ' + error.message
       });
+    }
+  });
+
+  // ============================================
+  // EXCLUSÃO DE REGISTROS (CHECKLISTS, CONTATOS, AGENDAMENTOS, ETC.)
+  // ============================================
+  app.all(['/api/delete', '/api/delete-record', '/api/remover', '/start/api/delete_record'], async (req, res) => {
+    try {
+      const data = req.method === 'GET' ? req.query : req.body;
+      const { tipo, tipo_entidade, type, guid, id, usuario_id, userId, motivo, reason } = data || {};
+      const entityType = tipo_entidade || tipo || type || 'geral';
+      const recordGuid = guid || id;
+      const operatorId = Number(usuario_id || userId) || 1;
+      const reasonText = motivo || reason || 'Exclusão solicitada pelo usuário';
+
+      if (!recordGuid) {
+        return res.status(400).json({
+          success: false,
+          message: 'ID/GUID do registro é obrigatório para exclusão.'
+        });
+      }
+
+      if (!dbHealthy) {
+        return res.json({
+          success: true,
+          message: 'Servidor operando em modo offline. Exclusão registrada localmente.',
+          guid: recordGuid,
+          offline: true
+        });
+      }
+
+      const result = await deleteRecordFromDatabase(entityType, recordGuid, operatorId, reasonText);
+      return res.json(result);
+    } catch (err: any) {
+      console.error('❌ Erro na exclusão de registro:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Erro interno ao processar exclusão: ' + err.message
+      });
+    }
+  });
+
+  app.delete('/api/records/:type/:guid', async (req, res) => {
+    try {
+      const { type, guid } = req.params;
+      const operatorId = Number(req.query.userId || req.query.usuario_id) || 1;
+      const reason = (req.query.reason || req.query.motivo || 'Exclusão via API REST') as string;
+
+      if (!dbHealthy) {
+        return res.json({ success: true, guid, offline: true });
+      }
+
+      const result = await deleteRecordFromDatabase(type, guid, operatorId, reason);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
     }
   });
 

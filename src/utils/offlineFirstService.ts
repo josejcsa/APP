@@ -117,6 +117,90 @@ export class OfflineFirstService {
   }
 
   /**
+   * Remove um item do buffer local e registra intenção de exclusão
+   */
+  public static async removerItem(
+    tipo: OfflineSyncItem['tipo_entidade'],
+    guid: string,
+    usuarioId: number = 1,
+    motivo?: string
+  ): Promise<void> {
+    if (!guid) return;
+
+    try {
+      const db = await this.getDB();
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+
+      // 1. Remove registro anterior se existir no IndexedDB
+      store.delete(guid);
+
+      // 2. Registra ação de exclusão pendente
+      const deleteItem: OfflineSyncItem = {
+        guid,
+        id_banco: null,
+        sincronizado: false,
+        tipo_entidade: tipo,
+        usuario_id: usuarioId,
+        dados: {
+          id: guid,
+          guid,
+          action: 'delete',
+          acao: 'delete',
+          tipo_entidade: tipo,
+          motivo: motivo || 'Exclusão solicitada pelo usuário',
+        },
+        criado_em: new Date().toISOString(),
+        atualizado_em: new Date().toISOString(),
+      };
+      store.put(deleteItem);
+
+      await new Promise<void>((resolve) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch (e) {
+      console.warn('Fallback para exclusão no buffer:', e);
+      try {
+        const buffer = JSON.parse(localStorage.getItem('elthera_offline_buffer') || '[]');
+        const filtered = buffer.filter((b: any) => b.guid !== guid);
+        filtered.push({
+          guid,
+          tipo_entidade: tipo,
+          sincronizado: false,
+          dados: { id: guid, guid, action: 'delete', motivo },
+          atualizado_em: new Date().toISOString(),
+        });
+        localStorage.setItem('elthera_offline_buffer', JSON.stringify(filtered));
+      } catch (err) {}
+    }
+
+    // Tenta chamada direta imediata ao backend se online
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      try {
+        fetch('/api/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tipo_entidade: tipo,
+            guid,
+            usuario_id: usuarioId,
+            motivo,
+          }),
+        }).then(async (res) => {
+          if (res.ok) {
+            try {
+              const db = await this.getDB();
+              const tx = db.transaction(STORE_NAME, 'readwrite');
+              tx.objectStore(STORE_NAME).delete(guid);
+            } catch (err) {}
+          }
+        }).catch(() => {});
+      } catch (e) {}
+    }
+  }
+
+  /**
    * Poda registros antigos se ultrapassar MAX_LOCAL_BUFFER_ITEMS
    */
   private static async podarBufferAntigo(): Promise<void> {
@@ -179,28 +263,28 @@ export class OfflineFirstService {
     try {
       const contatos = storage.getContacts();
       for (const c of contatos) {
-        if (!c.id_banco || !c.sincronizado) {
+        if ((!c.id_banco || !c.sincronizado) && !storage.isGuidDeleted(c.guid || c.id)) {
           this.salvarItem('contact', c);
         }
       }
 
       const checklists = storage.getChecklists();
       for (const chk of checklists) {
-        if (!chk.id_banco || !chk.sincronizado) {
+        if ((!chk.id_banco || !chk.sincronizado) && !storage.isGuidDeleted(chk.guid || chk.id)) {
           this.salvarItem('checklist', chk);
         }
       }
 
       const agendamentos = storage.getAppointments();
       for (const apt of agendamentos) {
-        if (!apt.id_banco || !apt.sincronizado) {
+        if ((!apt.id_banco || !apt.sincronizado) && !storage.isGuidDeleted(apt.guid || apt.id)) {
           this.salvarItem('appointment', apt);
         }
       }
 
       const lancamentos = storage.getFinancials();
       for (const fin of lancamentos) {
-        if (!fin.id_banco || !fin.sincronizado) {
+        if ((!fin.id_banco || !fin.sincronizado) && !storage.isGuidDeleted(fin.guid || fin.id)) {
           this.salvarItem('financial', fin);
         }
       }
@@ -228,6 +312,12 @@ export class OfflineFirstService {
       const store = tx.objectStore(STORE_NAME);
 
       for (const map of mapeamentos) {
+        if (map.status === 'deleted') {
+          store.delete(map.guid);
+          storage.removeDeletedGuid(map.guid);
+          continue;
+        }
+
         const getReq = store.get(map.guid);
         getReq.onsuccess = () => {
           const item: OfflineSyncItem | undefined = getReq.result;
@@ -490,6 +580,9 @@ export class OfflineFirstService {
         contatosLocais.forEach((c) => mapContatos.set(c.guid || c.id, c));
 
         for (const cr of contatosRemotos) {
+          const key = cr.guid || cr.id;
+          if (storage.isGuidDeleted(key)) continue;
+
           // Segurança: Nunca baixar ou expor o usuário master nem salvar senhas de outros usuários
           if (
             cr.guid === 'usr-admin-master' ||
@@ -504,7 +597,6 @@ export class OfflineFirstService {
           delete cr.password;
           delete cr.senha;
 
-          const key = cr.guid || cr.id;
           if (mapContatos.has(key)) {
             const local = mapContatos.get(key);
             mapContatos.set(key, {
@@ -543,6 +635,7 @@ export class OfflineFirstService {
 
         for (const chkR of checklistsRemotos) {
           const key = chkR.guid || chkR.id;
+          if (storage.isGuidDeleted(key)) continue;
           if (mapChecklists.has(key)) {
             const local = mapChecklists.get(key);
             mapChecklists.set(key, { ...local, ...chkR, id_banco: chkR.id_banco || local.id_banco, sincronizado: true });
@@ -565,6 +658,7 @@ export class OfflineFirstService {
 
         for (const aptR of agendamentosRemotos) {
           const key = aptR.guid || aptR.id;
+          if (storage.isGuidDeleted(key)) continue;
           if (mapAgendamentos.has(key)) {
             const local = mapAgendamentos.get(key);
             mapAgendamentos.set(key, { ...local, ...aptR, id_banco: aptR.id_banco || local.id_banco, sincronizado: true });
@@ -587,6 +681,7 @@ export class OfflineFirstService {
 
         for (const fR of financeiroRemoto) {
           const key = fR.guid || fR.id;
+          if (storage.isGuidDeleted(key)) continue;
           if (mapFin.has(key)) {
             const local = mapFin.get(key);
             mapFin.set(key, { ...local, ...fR, id_banco: fR.id_banco || local.id_banco, sincronizado: true });

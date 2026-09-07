@@ -344,6 +344,26 @@ export async function syncBatchData(items: any[], usuarioId: number = 1): Promis
       const dados_json = typeof item.dados_json === 'string' ? item.dados_json : JSON.stringify(dados);
       const itemUsuarioId = item.usuario_id || usuarioId;
 
+      // Verifica se é uma ação de exclusão
+      const itemAction = item.action || item.acao || item.tipo_acao || (dados && (dados.action || dados.acao)) || 'save';
+      const isDelete = itemAction === 'delete' || itemAction === 'exclusao' || item.is_deleted === true || dados?.is_deleted === true;
+
+      if (isDelete) {
+        try {
+          await deleteRecordFromDatabase(tipo_entidade, guid, itemUsuarioId, item.motivo || item.reason || dados?.reason);
+          itemsProcessed++;
+          mapeamento.push({
+            guid,
+            id_banco: 0,
+            tipo: tipo_entidade,
+            status: 'deleted'
+          });
+        } catch (delErr: any) {
+          console.error(`❌ Erro ao processar exclusão no sync para ${guid}:`, delErr);
+        }
+        continue;
+      }
+
       try {
         // 1. Insere/atualiza tabela central de sincronização
         await connection.query(
@@ -889,6 +909,90 @@ export async function authenticateUserInDatabase(phoneOrLogin: string, passwordI
 }
 
 /**
+ * Exclui um registro do banco de dados relacional e da tabela central de sincronização
+ */
+export async function deleteRecordFromDatabase(
+  tipo_entidade: string,
+  guid: string,
+  usuarioId: number = 1,
+  motivo?: string
+): Promise<{ success: boolean; message: string; guid: string; deleted: boolean }> {
+  if (!guid) {
+    return { success: false, message: 'GUID não fornecido', guid: '', deleted: false };
+  }
+
+  try {
+    const pool = getDatabasePool();
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      const normalizedType = (tipo_entidade || '').toLowerCase();
+
+      // 1. Exclui da tabela especializada conforme o tipo
+      if (normalizedType === 'checklist') {
+        await connection.query('DELETE FROM checklists_laudos WHERE guid = ?', [guid]);
+      } else if (normalizedType === 'contact' || normalizedType === 'cliente' || normalizedType === 'tecnico') {
+        await connection.query('DELETE FROM cadastros_contatos WHERE guid = ?', [guid]);
+      } else if (normalizedType === 'appointment' || normalizedType === 'agendamento') {
+        await connection.query('DELETE FROM agendamentos_ordens WHERE guid = ?', [guid]);
+      } else if (normalizedType === 'financial' || normalizedType === 'financeiro') {
+        await connection.query('DELETE FROM financeiro_lancamentos WHERE guid = ?', [guid]);
+      }
+
+      // 2. Exclui da tabela central de sincronização
+      await connection.query('DELETE FROM registros_sincronizacao WHERE guid = ?', [guid]);
+
+      // 3. Registra auditoria da exclusão no histórico
+      try {
+        const auditGuid = `del_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await connection.query(
+          `INSERT INTO auditoria_historico (guid, entity_type, entity_id, acao, usuario, usuario_id, resumo, dados_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            auditGuid,
+            normalizedType || 'registro',
+            guid,
+            'Exclusão',
+            `Usuário #${usuarioId}`,
+            usuarioId,
+            motivo ? `Registro excluído: ${motivo}` : `Registro ${guid} excluído do banco de dados`,
+            JSON.stringify({ guid, tipo_entidade: normalizedType, motivo, data_exclusao: new Date().toISOString() })
+          ]
+        );
+      } catch (auditErr) {
+        // Log de auditoria não deve bloquear a exclusão
+        console.warn('Aviso: falha ao salvar log de auditoria da exclusão:', auditErr);
+      }
+
+      await connection.commit();
+      connection.release();
+
+      console.log(`✅ Registro ${guid} (${normalizedType}) excluído com sucesso do banco de dados.`);
+      return {
+        success: true,
+        message: `Registro ${guid} excluído com sucesso do banco de dados.`,
+        guid,
+        deleted: true
+      };
+    } catch (txErr) {
+      await connection.rollback();
+      connection.release();
+      throw txErr;
+    }
+  } catch (err: any) {
+    console.error('❌ Erro ao excluir registro do banco:', err);
+    return {
+      success: false,
+      message: 'Falha ao excluir do banco de dados: ' + err.message,
+      guid,
+      deleted: false
+    };
+  }
+}
+
+/**
  * Close all database connections gracefully
  * Call this during server shutdown
  */
@@ -913,5 +1017,6 @@ export default {
   syncBatchData, 
   getTableCounts, 
   fetchRemoteSyncRecords,
-  authenticateUserInDatabase
+  authenticateUserInDatabase,
+  deleteRecordFromDatabase
 };

@@ -904,23 +904,40 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                 ⚡ Ao salvar, o evento anterior no <b>Google Calendar</b> será excluído e um novo evento com os dados atualizados será registrado.
               </div>
 
-              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+              <div className="flex justify-between items-center space-x-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => {
-                    setIsEditModalOpen(false);
-                    setEditingAppointment(null);
+                    if (editingAppointment && confirm('Deseja realmente excluir este agendamento?')) {
+                      storage.deleteAppointment(editingAppointment.id);
+                      setIsEditModalOpen(false);
+                      setEditingAppointment(null);
+                      refreshList();
+                    }
                   }}
-                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 font-semibold cursor-pointer"
+                  className="px-3.5 py-2 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl font-bold text-xs flex items-center space-x-1.5 cursor-pointer shadow-xs transition-colors"
                 >
-                  Cancelar
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Excluir Agendamento</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 rounded-xl font-bold shadow-xs shadow-amber-200 cursor-pointer"
-                >
-                  Salvar Alterações & Re-sincronizar Calendar
-                </button>
+                <div className="flex space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditModalOpen(false);
+                      setEditingAppointment(null);
+                    }}
+                    className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 font-semibold cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 rounded-xl font-bold shadow-xs shadow-amber-200 cursor-pointer"
+                  >
+                    Salvar Alterações & Re-sincronizar Calendar
+                  </button>
+                </div>
               </div>
             </form>
           </div>

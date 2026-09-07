@@ -28,7 +28,8 @@ import {
   Share2,
   Printer,
   Download,
-  Edit3
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { TechnicalChecklist, Contact, Appointment, SolarServiceItem, ExpenseSupplyItem } from '../types';
@@ -82,6 +83,26 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
     settings.currentUser || technicians.find(t => t.id === technicianId)?.name || 'Técnico Responsável'
   );
   const [editReason, setEditReason] = useState<string>('');
+
+  // Delete checklist state
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [deleteReason, setDeleteReason] = useState<string>('');
+  const [deleteOperator, setDeleteOperator] = useState<string>(
+    settings.currentUser || technicians.find(t => t.id === technicianId)?.name || 'Técnico Responsável'
+  );
+
+  const handleDeleteChecklist = () => {
+    const targetId = checklistToEdit?.id || savedChecklistRef?.id;
+    if (!targetId) return;
+
+    storage.deleteChecklist(targetId, deleteOperator, deleteReason || 'Excluído no formulário de checklist');
+    notificationService.notifyTechnician(
+      '⚠️ Checklist Excluído',
+      `O Laudo Técnico #${checklistToEdit?.protocolNumber || savedChecklistRef?.protocolNumber || targetId} foi removido com sucesso.`
+    );
+    setShowDeleteModal(false);
+    onCancel();
+  };
 
   // Step 2: Before state
   const [readingKwBefore, setReadingKwBefore] = useState(checklistToEdit?.before.readingKwBefore || 0);
@@ -522,10 +543,21 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
           </div>
 
           <div className="flex items-center space-x-2">
+            {(checklistToEdit || savedChecklistRef) && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="px-3.5 py-2 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer shadow-xs"
+                title="Excluir este laudo/checklist"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                <span>Excluir</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={onCancel}
-              className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-xl transition-colors"
+              className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
             >
               Cancelar
             </button>
@@ -732,11 +764,21 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
             </div>
           )}
 
-          <div className="flex justify-end pt-4 border-t border-slate-100">
+          <div className="flex justify-between items-center pt-4 border-t border-slate-100">
+            {checklistToEdit ? (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="flex items-center space-x-1.5 px-4 py-2.5 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <span>Excluir Laudo</span>
+              </button>
+            ) : <div />}
             <button
               type="button"
               onClick={() => setCurrentStep(2)}
-              className="flex items-center space-x-1.5 px-5 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 text-xs font-bold rounded-xl transition-all shadow-xs shadow-amber-200 active:scale-95"
+              className="flex items-center space-x-1.5 px-5 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 text-xs font-bold rounded-xl transition-all shadow-xs shadow-amber-200 active:scale-95 cursor-pointer"
             >
               <span>Avançar para Vistoria Antes</span>
               <ArrowRight className="w-4 h-4" />
@@ -1762,6 +1804,15 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
                   <Download className="w-3.5 h-3.5" />
                   <span>Baixar PDF</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(true)}
+                  className="flex items-center space-x-1 px-3 py-2 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+                  title="Excluir este laudo/checklist"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Excluir</span>
+                </button>
               </div>
             </div>
 
@@ -1792,6 +1843,74 @@ export const TechnicalChecklistForm: React.FC<TechnicalChecklistFormProps> = ({
           </div>
         );
       })()}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-slate-900">Excluir Laudo Técnico</h4>
+                <p className="text-xs text-slate-500">Esta ação excluirá o checklist e sincronizará a remoção.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              Tem certeza que deseja excluir o checklist{' '}
+              <strong>#{checklistToEdit?.protocolNumber || savedChecklistRef?.protocolNumber || ''}</strong>?
+              O registro financeiro vinculado também será excluído e o agendamento retornará para o status pendente.
+            </p>
+
+            <div className="space-y-3 pt-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                  Responsável pela Exclusão
+                </label>
+                <input
+                  type="text"
+                  value={deleteOperator}
+                  onChange={(e) => setDeleteOperator(e.target.value)}
+                  className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-xl focus:border-amber-400 focus:outline-hidden"
+                  placeholder="Nome do operador"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                  Motivo da Exclusão
+                </label>
+                <input
+                  type="text"
+                  value={deleteReason}
+                  onChange={(e) => setDeleteReason(e.target.value)}
+                  className="w-full text-xs px-3 py-2 border border-slate-200 rounded-xl focus:border-amber-400 focus:outline-hidden"
+                  placeholder="Ex: Laudo emitido por engano, cancelado pelo cliente, etc."
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl hover:bg-slate-50 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteChecklist}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs shadow-rose-200 cursor-pointer"
+              >
+                Confirmar Exclusão
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

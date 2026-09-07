@@ -83,6 +83,18 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
                 Ler todas
               </button>
             )}
+            {notifications.length > 0 && (
+              <button
+                onClick={() => {
+                  storage.clearNotifications();
+                  refreshList();
+                }}
+                title="Limpar todas as notificações"
+                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
@@ -149,7 +161,21 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
                         {notif.title}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-400">{dateStr}</span>
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-[10px] text-slate-400">{dateStr}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          storage.deleteNotification(notif.id);
+                          refreshList();
+                        }}
+                        className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                        title="Excluir notificação"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                   <p className="text-xs text-slate-600 mt-1 pl-6 leading-relaxed">{notif.message}</p>
                 </div>

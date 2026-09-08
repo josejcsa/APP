@@ -312,7 +312,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
+              {/*<div>
                 <label className="block text-slate-700 mb-1 font-bold">Endpoint da API PHP</label>
                 <input
                   type="text"
@@ -327,7 +327,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   }`}
                 />
                 <span className="text-[10px] text-slate-400 mt-0.5 block">Deixe em branco para detecção automática da pasta /app/api</span>
-              </div>
+              </div> */}
               <div>
                 <label className="block text-slate-700 mb-1 font-bold">Intervalo de Sincronização Agendada (Minutos)</label>
                 <input

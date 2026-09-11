@@ -22,13 +22,17 @@ import {
   History,
   RefreshCw,
   LogIn,
-  Settings
+  Settings,
+  Sun,
+  Sparkles
 } from 'lucide-react';
-import { Appointment, Contact, SolarServiceItem, TechnicalChecklist } from '../types';
+import { Appointment, Contact, SolarServiceItem, TechnicalChecklist, WeatherConditionType } from '../types';
 import { storage } from '../utils/storage';
 import { notificationService } from '../utils/notifications';
 import { formatCurrency, formatNumberBRL } from '../utils/formatters';
 import { calculateTechnicianRouteCost } from '../utils/routeCost';
+import { WeatherConditionIcon } from '../utils/weatherConditions';
+import { RooftopWeatherCalendarTab } from './appointments/RooftopWeatherCalendarTab';
 export { calculateTechnicianRouteCost };
 
 interface AppointmentsManagerProps {
@@ -58,15 +62,38 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
   const [isGcalModalOpen, setIsGcalModalOpen] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [copiedIcal, setCopiedIcal] = useState(false);
+  const [activeSubTab, setActiveSubTab] = useState<'appointments' | 'weather_dates'>('appointments');
+
+  const handleSelectDateFromWeather = (data: {
+    customerId: string;
+    technicianId?: string;
+    scheduledDate: string;
+    scheduledTime: string;
+    attachedWeatherNotes: string;
+    weatherCondition?: WeatherConditionType;
+    weatherCode?: number;
+  }) => {
+    setNewCustomerId(data.customerId);
+    if (data.technicianId) setNewTechnicianId(data.technicianId);
+    setNewDate(data.scheduledDate);
+    setNewTime(data.scheduledTime);
+    setNewNotes(data.attachedWeatherNotes);
+    setNewWeatherCondition(data.weatherCondition);
+    setNewWeatherCode(data.weatherCode);
+    setActiveSubTab('appointments');
+    setIsNewModalOpen(true);
+  };
 
   // New Appointment Form State
   const [newCustomerId, setNewCustomerId] = useState(clients[0]?.id || '');
   const [newTechnicianId, setNewTechnicianId] = useState(technicians[0]?.id || '');
   const [newDate, setNewDate] = useState(new Date().toISOString().slice(0, 10));
-  const [newTime, setNewTime] = useState('09:00');
+  const [newTime, setNewTime] = useState('07:00');
   const [newDuration, setNewDuration] = useState(120);
   const [newSelectedServices, setNewSelectedServices] = useState<string[]>(['srv-1']);
   const [newNotes, setNewNotes] = useState('');
+  const [newWeatherCondition, setNewWeatherCondition] = useState<WeatherConditionType | undefined>(undefined);
+  const [newWeatherCode, setNewWeatherCode] = useState<number | undefined>(undefined);
 
   // Edit Appointment Form State
   const [editCustomerId, setEditCustomerId] = useState('');
@@ -77,6 +104,8 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
   const [editSelectedServices, setEditSelectedServices] = useState<string[]>([]);
   const [editNotes, setEditNotes] = useState('');
   const [editStatus, setEditStatus] = useState<any>('agendado');
+  const [editWeatherCondition, setEditWeatherCondition] = useState<WeatherConditionType | undefined>(undefined);
+  const [editWeatherCode, setEditWeatherCode] = useState<number | undefined>(undefined);
 
   const refreshList = () => {
     setAppointments(storage.getAppointments());
@@ -95,6 +124,10 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
     if (currentTechs.length > 0 && (!newTechnicianId || !currentTechs.some(t => t.id === newTechnicianId))) {
       setNewTechnicianId(currentTechs[0].id);
     }
+    // Observações só contêm relatório meteorológico se iniciado pelo painel da previsão do tempo
+    setNewNotes('');
+    setNewWeatherCondition(undefined);
+    setNewWeatherCode(undefined);
     setIsNewModalOpen(true);
   };
 
@@ -108,6 +141,8 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
     setEditSelectedServices(apt.serviceIds && apt.serviceIds.length > 0 ? apt.serviceIds : ['srv-1']);
     setEditNotes(apt.notes || '');
     setEditStatus(apt.status);
+    setEditWeatherCondition(apt.weatherCondition);
+    setEditWeatherCode(apt.weatherCode);
     setIsEditModalOpen(true);
   };
 
@@ -132,6 +167,8 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
       notes: newNotes,
       totalAmount: route.totalRouteCost,
       notificationSent: false,
+      weatherCondition: newWeatherCondition,
+      weatherCode: newWeatherCode,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -175,6 +212,8 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
       notes: editNotes,
       totalAmount: route.totalRouteCost,
       status: editStatus,
+      weatherCondition: editWeatherCondition !== undefined ? editWeatherCondition : editingAppointment.weatherCondition,
+      weatherCode: editWeatherCode !== undefined ? editWeatherCode : editingAppointment.weatherCode,
       updatedAt: new Date().toISOString(),
     };
 
@@ -252,68 +291,109 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
 
   return (
     <div id="appointments-manager-container" className="space-y-6">
-      {/* Top Header & Filters */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-amber-400 rounded-lg flex items-center justify-center font-black text-amber-950 text-sm shadow-xs shadow-amber-200">
-              <CalendarIcon className="w-4 h-4 text-amber-950" />
-            </div>
-            <h2 className="text-lg font-bold text-slate-900 tracking-tight">Agendamentos & Google Calendar</h2>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Gestão de visitas técnicas vinculadas à agenda privada Google com sincronização em tempo real.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-          {/* Tech Filter */}
-          <select
-            value={filterTechnician}
-            onChange={(e) => setFilterTechnician(e.target.value)}
-            className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400"
-          >
-            <option value="all">Todos os Técnicos</option>
-            {technicians.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-
-          {/* Status Filter */}
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400"
-          >
-            <option value="all">Todos os Status</option>
-            <option value="agendado">Agendados</option>
-            <option value="em_andamento">Em Andamento</option>
-            <option value="concluido">Concluídos</option>
-            <option value="cancelado">Cancelados</option>
-          </select>
-
+      {/* Sub-Tabs: Agendamentos vs Sugerir Melhores Datas */}
+      <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+        <div className="flex items-center space-x-2 w-full sm:w-auto overflow-x-auto">
           <button
             type="button"
-            id="btn-open-new-appointment-modal"
-            onClick={openNewModal}
-            className="px-4 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs shadow-amber-200 transition-all active:scale-95 cursor-pointer"
+            id="tab-btn-appointments-list"
+            onClick={() => setActiveSubTab('appointments')}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all cursor-pointer ${
+              activeSubTab === 'appointments'
+                ? 'bg-amber-400 text-amber-950 shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
           >
-            <Plus className="w-4 h-4" />
-            <span>+ Novo Agendamento</span>
+            <CalendarIcon className="w-4 h-4" />
+            <span>Agendamentos & Agenda Google ({appointments.length})</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setIsGcalModalOpen(true)}
-            title="Configurações e Sincronização Google Calendar"
-            className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center shadow-2xs"
+            id="tab-btn-weather-dates"
+            onClick={() => setActiveSubTab('weather_dates')}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all cursor-pointer ${
+              activeSubTab === 'weather_dates'
+                ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800'
+            }`}
           >
-            <Settings className="w-4 h-4" />
+            <Sun className="w-4 h-4 text-emerald-600" />
+            <span>Melhores Datas</span>
           </button>
         </div>
       </div>
+
+      {activeSubTab === 'weather_dates' ? (
+        <RooftopWeatherCalendarTab
+          clients={clients}
+          technicians={technicians}
+          onSelectDateForAppointment={handleSelectDateFromWeather}
+        />
+      ) : (
+        <>
+          {/* Top Header & Filters */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 bg-amber-400 rounded-lg flex items-center justify-center font-black text-amber-950 text-sm shadow-xs shadow-amber-200">
+                  <CalendarIcon className="w-4 h-4 text-amber-950" />
+                </div>
+                <h2 className="text-lg font-bold text-slate-900 tracking-tight">Agendamentos & Google Calendar</h2>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Gestão de visitas técnicas vinculadas à agenda privada Google com sincronização em tempo real.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+              {/* Tech Filter */}
+              <select
+                value={filterTechnician}
+                onChange={(e) => setFilterTechnician(e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="all">Todos os Técnicos</option>
+                {technicians.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+
+              {/* Status Filter */}
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="all">Todos os Status</option>
+                <option value="agendado">Agendados</option>
+                <option value="em_andamento">Em Andamento</option>
+                <option value="concluido">Concluídos</option>
+                <option value="cancelado">Cancelados</option>
+              </select>
+
+              <button
+                type="button"
+                id="btn-open-new-appointment-modal"
+                onClick={openNewModal}
+                className="px-4 py-2.5 bg-amber-400 hover:bg-amber-500 text-amber-950 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs shadow-amber-200 transition-all active:scale-95 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Novo Agendamento</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsGcalModalOpen(true)}
+                title="Configurações e Sincronização Google Calendar"
+                className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all active:scale-95 cursor-pointer border border-slate-200 flex items-center justify-center shadow-2xs"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
 
       {/* Google Calendar Modal Popup */}
       {isGcalModalOpen && (
@@ -429,9 +509,19 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                   </div>
 
                   <div className="flex items-center text-xs text-slate-500 font-medium space-x-2">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-amber-500" />
-                      {apt.scheduledDate.split('-').reverse().join('/')} às {apt.scheduledTime}
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>{apt.scheduledDate.split('-').reverse().join('/')} às {apt.scheduledTime}</span>
+                      <WeatherConditionIcon
+                        date={apt.scheduledDate}
+                        time={apt.scheduledTime}
+                        condition={apt.weatherCondition}
+                        weatherCode={apt.weatherCode}
+                        lat={customer?.address?.coordinates?.lat}
+                        lng={customer?.address?.coordinates?.lng}
+                        className="w-4 h-4 ml-0.5 inline-flex shrink-0"
+                        showTooltip
+                      />
                     </span>
                     <span className="text-slate-300">•</span>
                     <span>{apt.estimatedDurationMinutes} min</span>
@@ -470,6 +560,21 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                       </div>
                     );
                   })()}
+                  {apt.notes && (
+                    <div
+                      className={`p-2 rounded-xl text-[11px] leading-snug border ${
+                        apt.notes.includes('NR-35') || apt.notes.includes('METEOROLÓGICO')
+                          ? 'bg-emerald-50 text-emerald-950 border-emerald-200'
+                          : 'bg-slate-50 text-slate-600 border-slate-200'
+                      }`}
+                    >
+                      <span className="font-bold flex items-center gap-1 mb-0.5">
+                        {apt.notes.includes('NR-35') && <Sun className="w-3 h-3 text-emerald-600 shrink-0" />}
+                        Instruções & Previsão Meteorológica:
+                      </span>
+                      <p className="line-clamp-2 text-[10px] opacity-90">{apt.notes}</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Action Buttons */}
@@ -572,6 +677,8 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
           })
         )}
       </div>
+      </>
+      )}
 
       {/* New Appointment Modal */}
       {isNewModalOpen && (
@@ -584,8 +691,26 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                 </div>
                 <h3 className="font-bold text-slate-900 text-base">Novo Agendamento Técnico</h3>
               </div>
-              <button onClick={() => setIsNewModalOpen(false)} className="text-slate-400 hover:text-slate-700">
+              <button onClick={() => setIsNewModalOpen(false)} className="text-slate-400 hover:text-slate-700 cursor-pointer">
                 <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick Weather Assistant CTA */}
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between gap-2 text-[11px] text-emerald-950">
+              <div className="flex items-center gap-1.5 font-semibold">
+                <Sun className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Dúvida sobre qual dia agendar para subir no telhado?</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsNewModalOpen(false);
+                  setActiveSubTab('weather_dates');
+                }}
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shrink-0 cursor-pointer transition-colors"
+              >
+                Ver Melhores Dias (NR-35)
               </button>
             </div>
 
@@ -646,14 +771,43 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Horário *</label>
-                  <input
-                    type="time"
-                    value={newTime}
-                    onChange={(e) => setNewTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800"
-                    required
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-bold text-slate-700">Horário *</label>
+                    <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded-md">
+                      <WeatherConditionIcon
+                        date={newDate}
+                        time={newTime}
+                        condition={newWeatherCondition}
+                        weatherCode={newWeatherCode}
+                        lat={clients.find(c => c.id === newCustomerId)?.address?.coordinates?.lat}
+                        lng={clients.find(c => c.id === newCustomerId)?.address?.coordinates?.lng}
+                        className="w-3.5 h-3.5"
+                        showTooltip
+                      />
+                      <span className="text-[10px] font-medium text-slate-600">Tempo</span>
+                    </span>
+                  </div>
+                  <div className="relative flex items-center">
+                    <input
+                      type="time"
+                      value={newTime}
+                      onChange={(e) => setNewTime(e.target.value)}
+                      className="w-full px-3 py-2 pr-9 border border-slate-200 rounded-xl text-slate-800"
+                      required
+                    />
+                    <div className="absolute right-2.5 pointer-events-none">
+                      <WeatherConditionIcon
+                        date={newDate}
+                        time={newTime}
+                        condition={newWeatherCondition}
+                        weatherCode={newWeatherCode}
+                        lat={clients.find(c => c.id === newCustomerId)?.address?.coordinates?.lat}
+                        lng={clients.find(c => c.id === newCustomerId)?.address?.coordinates?.lng}
+                        className="w-4 h-4"
+                        showTooltip={false}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -830,14 +984,43 @@ export const AppointmentsManager: React.FC<AppointmentsManagerProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Horário *</label>
-                  <input
-                    type="time"
-                    value={editTime}
-                    onChange={(e) => setEditTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800"
-                    required
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-bold text-slate-700">Horário *</label>
+                    <span className="inline-flex items-center gap-1 text-[11px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded-md">
+                      <WeatherConditionIcon
+                        date={editDate}
+                        time={editTime}
+                        condition={editWeatherCondition}
+                        weatherCode={editWeatherCode}
+                        lat={clients.find(c => c.id === editCustomerId)?.address?.coordinates?.lat}
+                        lng={clients.find(c => c.id === editCustomerId)?.address?.coordinates?.lng}
+                        className="w-3.5 h-3.5"
+                        showTooltip
+                      />
+                      <span className="text-[10px] font-medium text-slate-600">Tempo</span>
+                    </span>
+                  </div>
+                  <div className="relative flex items-center">
+                    <input
+                      type="time"
+                      value={editTime}
+                      onChange={(e) => setEditTime(e.target.value)}
+                      className="w-full px-3 py-2 pr-9 border border-slate-200 rounded-xl text-slate-800"
+                      required
+                    />
+                    <div className="absolute right-2.5 pointer-events-none">
+                      <WeatherConditionIcon
+                        date={editDate}
+                        time={editTime}
+                        condition={editWeatherCondition}
+                        weatherCode={editWeatherCode}
+                        lat={clients.find(c => c.id === editCustomerId)?.address?.coordinates?.lat}
+                        lng={clients.find(c => c.id === editCustomerId)?.address?.coordinates?.lng}
+                        className="w-4 h-4"
+                        showTooltip={false}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 

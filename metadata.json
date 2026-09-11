@@ -1,6 +1,6 @@
 {
   "name": "Elthera - Gestão & Checklist Solar Fotovoltaico",
-  "description": "Aplicativo de checklist técnico antes e depois para limpeza de painéis solares, relatórios em PDF com assinatura, controle financeiro mensal, suporte offline com sincronização e integração com Google Calendar e Google Sheets.",
+  "description": "Aplicativo de checklist técnico para usinas solares, relatórios em PDF com assinatura, controle financeiro, assistente meteorológico estilo Google Flights para agendamento seguro em telhado (NR-35), suporte offline e integração com Google Calendar.",
   "requestFramePermissions": ["camera", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

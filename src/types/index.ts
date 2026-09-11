@@ -98,6 +98,19 @@ export interface ExpenseSupplyItem {
 
 export type AppointmentStatus = 'agendado' | 'em_deslocamento' | 'em_andamento' | 'concluido' | 'cancelado';
 
+export type WeatherConditionType =
+  | 'ensolarado'
+  | 'ceu_limpo_noite'
+  | 'parcialmente_nublado'
+  | 'parcialmente_nublado_noite'
+  | 'nublado'
+  | 'nevoeiro'
+  | 'garoa'
+  | 'chuva'
+  | 'tempestade'
+  | 'vento_forte'
+  | 'calor_extremo';
+
 export interface Appointment extends BaseOfflineEntity {
   id: string;
   customerId: string;
@@ -112,6 +125,8 @@ export interface Appointment extends BaseOfflineEntity {
   googleEventId?: string;
   checklistId?: string;
   notificationSent?: boolean;
+  weatherCondition?: WeatherConditionType;
+  weatherCode?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -257,6 +272,8 @@ export interface AccountPayable extends BaseOfflineEntity {
   appointmentId?: string;
   checklistId?: string;
   documentNumber?: string;
+  pixKey?: string;
+  pixKeyType?: 'cpf' | 'cnpj' | 'telefone' | 'email' | 'chavealeatorio';
   reconciled?: boolean; // Se participou de encontro de contas
   reconciliationBatchId?: string;
   notes?: string;
@@ -377,4 +394,86 @@ export interface CompanySettings {
   maxLocalRecordsLimit?: number; // Limite de registros salvos localmente (padrão 50, até 200)
   syncFilterStrategy?: SyncFilterStrategy; // Ordem/Critério de download
   autoDownloadRemoteData?: boolean; // Se baixa automaticamente registros de outros usuários ao sincronizar
+}
+
+export type RooftopSafetyStatus =
+  | 'Altamente Seguro'
+  | 'Cuidado Umidade'
+  | 'Cuidado Vento'
+  | 'Cuidado Temperatura'
+  | 'Evitar por Chuva Prevista'
+  | 'Evitar por Chuva Anterior'
+  | 'Evitar por Vento Forte'
+  | 'Evitar por Alta Umidade / Orvalho';
+
+export interface RooftopSafetyConfig {
+  prior24hRainMax: number; // 0 mm
+  priorNightHumidityMax: number; // 75 %
+  targetHourProbRainMax: number; // 0 %
+  targetHourRainVolumeMax: number; // 0 mm
+  targetHourHumidityMax: number; // 60 %
+  targetHourHumidityIdealMin: number; // 40 %
+  targetHourHumidityIdealMax: number; // 55 %
+  targetHourTempMin: number; // 14 °C
+  targetHourTempMax: number; // 30 °C
+  targetHourWindMax: number; // 25 km/h
+  heatBlockStartHour: number; // 10 (10:00)
+  heatBlockEndHour: number; // 17 (17:00)
+}
+
+export interface RooftopHourlyWeather {
+  time: string; // ISO string or HH:mm
+  hour: number;
+  temperature: number; // °C
+  relativeHumidity: number; // %
+  precipitation: number; // mm
+  precipitationProbability: number; // %
+  windSpeed: number; // km/h
+  weatherCode?: number;
+  weatherCondition?: WeatherConditionType;
+  weatherConditionLabel?: string;
+  isHeatBlocked: boolean; // between 10:00 and 17:00 (sugestão térmica)
+  isRecommended: boolean; // morning 06:00 - 09:30 or 17:00
+  severityLevel: 'green' | 'yellow' | 'orange'; // Verde = Ideal, Amarelo = Atenção, Laranja = Desaconselhado/Calor
+  severityLabel: string; // Ex: "Ideal / Seguro", "Atenção (Moderado)", "Desaconselhado (Calor/Placas)"
+  safetyStatus: RooftopSafetyStatus;
+  reasons: string[];
+}
+
+export interface RooftopDaySafetyAssessment {
+  date: string; // YYYY-MM-DD
+  dayOfWeek: string; // Seg, Ter, Qua...
+  formattedDate: string; // DD/MM/YYYY
+  isToday: boolean;
+  isPast: boolean;
+
+  // Prior 24h evaluation
+  prior24hRainSum: number; // mm
+  priorNightAvgHumidity: number; // %
+  prior24hSafe: boolean;
+  prior24hViolations: string[];
+
+  // Target hour evaluation (e.g. 07:00)
+  targetHour: number; // 7
+  targetTemperature: number;
+  targetHumidity: number;
+  targetWindSpeed: number;
+  targetPrecipitation: number;
+  targetRainProb: number;
+
+  // Safety rating
+  safetyStatus: RooftopSafetyStatus;
+  safetyScore: number; // 0 to 100%
+  isIdeal: boolean;
+  isAcceptable: boolean;
+  isBlocked: boolean;
+  reasons: string[];
+
+  // Safe window
+  recommendedWindow: string; // e.g. "06:00 às 09:30" ou "17:00 às 18:30"
+  hourlyForecast: RooftopHourlyWeather[];
+
+  // Seasonal forecast indicator for dates > 15 days ahead
+  isSeasonalForecast?: boolean;
+  seasonalWarning?: string;
 }

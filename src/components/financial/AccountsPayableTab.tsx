@@ -19,12 +19,15 @@ import {
   Zap,
   Check,
   X,
-  Link as LinkIcon
+  Link as LinkIcon,
+  QrCode
 } from 'lucide-react';
 import { AccountPayable, PaymentStatusAP, Contact, Appointment, TechnicalChecklist } from '../../types';
 import { storage } from '../../utils/storage';
 import { formatCurrency } from '../../utils/formatters';
 import { calculateTechnicianRouteCost } from '../../utils/routeCost';
+import { PixQrCodeSection } from './PixQrCodeSection';
+import { PixKeyType, detectPixKeyType } from '../../utils/pixPayload';
 
 interface AccountsPayableTabProps {
   contacts: Contact[];
@@ -70,6 +73,8 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
   const [dueDate, setDueDate] = useState(new Date().toISOString().slice(0, 10));
   const [paymentDate, setPaymentDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<AccountPayable['paymentMethod']>('pix');
+  const [pixKey, setPixKey] = useState('');
+  const [pixKeyType, setPixKeyType] = useState<PixKeyType>('email');
   const [status, setStatus] = useState<PaymentStatusAP>('pendente');
   const [linkedAppointmentId, setLinkedAppointmentId] = useState('');
   const [linkedChecklistId, setLinkedChecklistId] = useState('');
@@ -78,6 +83,49 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
 
   const technicians = useMemo(() => contacts.filter(c => c.isTechnician), [contacts]);
   const todayISO = new Date().toISOString().slice(0, 10);
+
+  // Busca dados de chave PIX a partir do cadastro do contato/técnico
+  const getPixDetailsFromContact = (techId?: string, benName?: string): { key: string; type: PixKeyType } => {
+    let contact = techId ? contacts.find(c => c.id === techId) : undefined;
+    if (!contact && benName) {
+      contact = contacts.find(c => c.name.trim().toLowerCase() === benName.trim().toLowerCase());
+    }
+    if (!contact) {
+      return { key: '', type: 'email' };
+    }
+
+    // 1. Chave explícita cadastrada no técnico
+    if (contact.technicianDetails?.pixKey && contact.technicianDetails.pixKey.trim()) {
+      const raw = contact.technicianDetails.pixKey.trim();
+      return { key: raw, type: detectPixKeyType(raw) };
+    }
+
+    // 2. CPF / CNPJ do cadastro
+    if (contact.document && contact.document.trim()) {
+      const digits = contact.document.replace(/\D/g, '');
+      if (digits.length === 11) {
+        return { key: digits, type: 'cpf' };
+      }
+      if (digits.length === 14) {
+        return { key: digits, type: 'cnpj' };
+      }
+    }
+
+    // 3. E-mail do cadastro
+    if (contact.email && contact.email.trim() && contact.email.includes('@')) {
+      return { key: contact.email.trim().toLowerCase(), type: 'email' };
+    }
+
+    // 4. Telefone celular do cadastro
+    if (contact.phone && contact.phone.trim()) {
+      const digits = contact.phone.replace(/\D/g, '');
+      if (digits.length >= 10) {
+        return { key: digits, type: 'telefone' };
+      }
+    }
+
+    return { key: '', type: 'email' };
+  };
 
   const refreshList = () => {
     setPayables(storage.getAccountsPayable());
@@ -88,8 +136,11 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
     setEditingItem(null);
     setDescription('');
     setCategory('combustivel_rota');
-    setBeneficiary(technicians[0]?.name || '');
-    setTechnicianId(technicians[0]?.id || '');
+    const defaultTech = technicians[0];
+    const techName = defaultTech?.name || '';
+    const techId = defaultTech?.id || '';
+    setBeneficiary(techName);
+    setTechnicianId(techId);
     setAmount(0);
     setDueDate(todayISO);
     setPaymentDate('');
@@ -99,6 +150,11 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
     setLinkedChecklistId('');
     setDocumentNumber('');
     setNotes('');
+
+    const pixData = getPixDetailsFromContact(techId, techName);
+    setPixKey(pixData.key);
+    setPixKeyType(pixData.type);
+
     setIsModalOpen(true);
   };
 
@@ -117,6 +173,16 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
     setLinkedChecklistId(item.checklistId || '');
     setDocumentNumber(item.documentNumber || '');
     setNotes(item.notes || '');
+
+    if (item.pixKey) {
+      setPixKey(item.pixKey);
+      setPixKeyType(item.pixKeyType || detectPixKeyType(item.pixKey));
+    } else {
+      const pixData = getPixDetailsFromContact(item.technicianId, item.beneficiary);
+      setPixKey(pixData.key);
+      setPixKeyType(pixData.type);
+    }
+
     setIsModalOpen(true);
   };
 
@@ -141,6 +207,8 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
       appointmentId: linkedAppointmentId || undefined,
       checklistId: linkedChecklistId || undefined,
       documentNumber: documentNumber.trim() || undefined,
+      pixKey: paymentMethod === 'pix' ? pixKey.trim() : undefined,
+      pixKeyType: paymentMethod === 'pix' ? pixKeyType : undefined,
       reconciled: editingItem ? editingItem.reconciled : false,
       reconciliationBatchId: editingItem ? editingItem.reconciliationBatchId : undefined,
       notes: notes.trim() || undefined,
@@ -206,16 +274,17 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
         const tech = contacts.find(c => c.id === apt.technicianId);
         const route = calculateTechnicianRouteCost(client, tech);
         if (route.totalRouteCost > 0) {
+          const visitDate = apt.scheduledDate || (apt as any).date;
           list.push({
             type: 'rota',
-            title: `Combustível Rota - ${client?.name || 'Cliente'} (${apt.date})`,
+            title: `Combustível Rota - ${client?.name || 'Cliente'} (${visitDate})`,
             category: 'combustivel_rota',
             beneficiary: tech?.name || 'Técnico Responsável',
             technicianId: tech?.id,
             amount: route.totalRouteCost,
             appointmentId: apt.id,
-            dueDate: apt.date,
-            notes: `Cálculo automático: ${route.roundTripKm.toFixed(1)} km ida/volta x R$ ${tech?.technicianDetails?.fuelCostPerKm?.toFixed(2) || '0,85'}/km`,
+            dueDate: visitDate,
+            notes: `Cálculo automático: ${route.roundTripKm.toFixed(1)} km ida/volta x R$ ${tech?.technicianDetails?.travelCostPerKm?.toFixed(2) || '0,67'}/km`,
           });
         }
       }
@@ -251,6 +320,7 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
 
   const handleImportAllSuggestions = () => {
     unimportedItems.forEach(item => {
+      const pixData = getPixDetailsFromContact(item.technicianId, item.beneficiary);
       const payable: AccountPayable = {
         id: `pay-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
         description: item.title,
@@ -260,6 +330,8 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
         amount: item.amount,
         dueDate: item.dueDate,
         paymentMethod: 'pix',
+        pixKey: pixData.key || undefined,
+        pixKeyType: pixData.key ? pixData.type : undefined,
         status: 'pendente',
         appointmentId: item.appointmentId,
         checklistId: item.checklistId,
@@ -273,6 +345,7 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
   };
 
   const handleImportSingle = (item: typeof unimportedItems[0]) => {
+    const pixData = getPixDetailsFromContact(item.technicianId, item.beneficiary);
     const payable: AccountPayable = {
       id: `pay-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       description: item.title,
@@ -282,6 +355,8 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
       amount: item.amount,
       dueDate: item.dueDate,
       paymentMethod: 'pix',
+      pixKey: pixData.key || undefined,
+      pixKeyType: pixData.key ? pixData.type : undefined,
       status: 'pendente',
       appointmentId: item.appointmentId,
       checklistId: item.checklistId,
@@ -631,7 +706,13 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
                     - {formatCurrency(item.amount)}
                   </td>
                   <td className="p-3 text-center uppercase text-[10px] font-bold text-slate-600 tracking-wider">
-                    {item.paymentMethod}
+                    {item.paymentMethod === 'pix' ? (
+                      <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md border border-emerald-200 font-black">
+                        <QrCode className="w-3 h-3 text-emerald-600" /> PIX
+                      </span>
+                    ) : (
+                      item.paymentMethod
+                    )}
                   </td>
                   <td className="p-3 text-center whitespace-nowrap">{getStatusBadge(item)}</td>
                   <td className="p-3 text-center flex items-center justify-center gap-1">
@@ -763,9 +844,19 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
                   <select
                     value={technicianId}
                     onChange={(e) => {
-                      setTechnicianId(e.target.value);
-                      const tech = technicians.find(t => t.id === e.target.value);
-                      if (tech && !beneficiary) setBeneficiary(tech.name);
+                      const techId = e.target.value;
+                      setTechnicianId(techId);
+                      const tech = technicians.find(t => t.id === techId);
+                      if (tech) {
+                        if (!beneficiary || technicians.some(t => t.name === beneficiary)) {
+                          setBeneficiary(tech.name);
+                        }
+                        const pixData = getPixDetailsFromContact(tech.id, tech.name);
+                        if (pixData.key) {
+                          setPixKey(pixData.key);
+                          setPixKeyType(pixData.type);
+                        }
+                      }
                     }}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900"
                   >
@@ -787,16 +878,31 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
                     required
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900"
                   />
+                  {linkedAppointmentId && (
+                    <span className="text-[10px] text-emerald-600 font-semibold block mt-0.5">
+                      ✓ Alinhada à data da visita técnica
+                    </span>
+                  )}
                 </div>
 
                 <div>
                   <label className="block text-slate-700 mb-1 font-bold">Forma Pagamento</label>
                   <select
                     value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as any)}
+                    onChange={(e) => {
+                      const val = e.target.value as any;
+                      setPaymentMethod(val);
+                      if (val === 'pix' && !pixKey) {
+                        const pixData = getPixDetailsFromContact(technicianId, beneficiary);
+                        if (pixData.key) {
+                          setPixKey(pixData.key);
+                          setPixKeyType(pixData.type);
+                        }
+                      }
+                    }}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900"
                   >
-                    <option value="pix">PIX</option>
+                    <option value="pix">PIX (Gera QR Code Automático)</option>
                     <option value="boleto">Boleto</option>
                     <option value="transferencia">Transferência TED/DOC</option>
                     <option value="cartao_credito">Cartão de Crédito</option>
@@ -835,15 +941,43 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
                   <label className="block text-slate-700 mb-1 font-bold">Vincular a Agendamento (Opcional)</label>
                   <select
                     value={linkedAppointmentId}
-                    onChange={(e) => setLinkedAppointmentId(e.target.value)}
+                    onChange={(e) => {
+                      const aptId = e.target.value;
+                      setLinkedAppointmentId(aptId);
+                      if (aptId) {
+                        const apt = appointments.find(a => a.id === aptId);
+                        if (apt) {
+                          // No formulário a data de vencimento deve ser a data da visita técnica
+                          const visitDate = apt.scheduledDate || (apt as any).date;
+                          if (visitDate) {
+                            setDueDate(visitDate);
+                          }
+                          if (apt.technicianId) {
+                            setTechnicianId(apt.technicianId);
+                            const tech = contacts.find(c => c.id === apt.technicianId);
+                            if (tech) {
+                              if (!beneficiary || technicians.some(t => t.name === beneficiary)) {
+                                setBeneficiary(tech.name);
+                              }
+                              const pixData = getPixDetailsFromContact(tech.id, tech.name);
+                              if (pixData.key) {
+                                setPixKey(pixData.key);
+                                setPixKeyType(pixData.type);
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900"
                   >
                     <option value="">Sem vínculo com agenda</option>
                     {appointments.map(apt => {
                       const client = contacts.find(c => c.id === apt.customerId);
+                      const aptDate = apt.scheduledDate || (apt as any).date;
                       return (
                         <option key={apt.id} value={apt.id}>
-                          {apt.date} - {client?.name || 'Cliente'} (#{apt.id.slice(-4)})
+                          {aptDate} - {client?.name || 'Cliente'} (#{apt.id.slice(-4)})
                         </option>
                       );
                     })}
@@ -888,6 +1022,21 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900"
                 />
               </div>
+
+              {/* Gerar o Qrcode no final do formulario deste popup quando PIX */}
+              {paymentMethod === 'pix' && (
+                <PixQrCodeSection
+                  initialKey={pixKey}
+                  initialKeyType={pixKeyType}
+                  amount={amount}
+                  category={category}
+                  beneficiaryName={beneficiary}
+                  onKeyChange={(newKey, newType) => {
+                    setPixKey(newKey);
+                    setPixKeyType(newType);
+                  }}
+                />
+              )}
 
               <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
                 <button
@@ -975,6 +1124,16 @@ export const AccountsPayableTab: React.FC<AccountsPayableTabProps> = ({
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900"
                 />
               </div>
+
+              {payMethod === 'pix' && (
+                <PixQrCodeSection
+                  initialKey={payingItem.pixKey || getPixDetailsFromContact(payingItem.technicianId, payingItem.beneficiary).key}
+                  initialKeyType={payingItem.pixKeyType || getPixDetailsFromContact(payingItem.technicianId, payingItem.beneficiary).type}
+                  amount={payingItem.amount}
+                  category={payingItem.category}
+                  beneficiaryName={payingItem.beneficiary}
+                />
+              )}
             </div>
 
             <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">

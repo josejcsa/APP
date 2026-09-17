@@ -12,7 +12,7 @@ import { resolveWeatherCondition } from './weatherConditions';
  */
 export const DEFAULT_ROOFTOP_SAFETY_CONFIG: RooftopSafetyConfig = {
   prior24hRainMax: 0, // Chuva acumulada nas últimas 24h = 0 mm (telhado seco, sem lodo/lama)
-  priorNightHumidityMax: 75, // Umidade média da madrugada < 75% (evita orvalho espesso e condensação)
+  priorNightHumidityMax: 98, // Umidade média da madrugada < 75% (evita orvalho espesso e condensação)
   targetHourProbRainMax: 0, // Probabilidade de chuva às 07:00 = 0%
   targetHourRainVolumeMax: 0, // Volume de chuva às 07:00 = 0 mm
   targetHourHumidityMax: 60, // Umidade relativa < 60%
@@ -397,7 +397,7 @@ export async function fetchAndAssessRooftopWeather(
         (h >= 9 && h < 10) ||
         item.temp > 28 ||
         item.humidity > config.targetHourHumidityMax ||
-        item.humidity < 35 ||
+        item.humidity < 70 ||
         item.wind >= 18 ||
         item.rainProb > 0
       ) {
@@ -480,7 +480,7 @@ export async function fetchAndAssessRooftopWeather(
       score += 25;
     } else if (priorNightAvgHumidity < config.priorNightHumidityMax) {
       score += 20;
-    } else if (priorNightAvgHumidity < 85) {
+    } else if (priorNightAvgHumidity < 90) {
       score += 10;
       reasons.push(`Umidade na madrugada de ${priorNightAvgHumidity}% (Risco de orvalho em telhas)`);
     } else {

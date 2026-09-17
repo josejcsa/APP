@@ -15,9 +15,9 @@ export const DEFAULT_ROOFTOP_SAFETY_CONFIG: RooftopSafetyConfig = {
   priorNightHumidityMax: 98, // Umidade média da madrugada < 75% (evita orvalho espesso e condensação)
   targetHourProbRainMax: 0, // Probabilidade de chuva às 07:00 = 0%
   targetHourRainVolumeMax: 0, // Volume de chuva às 07:00 = 0 mm
-  targetHourHumidityMax: 60, // Umidade relativa < 60%
-  targetHourHumidityIdealMin: 40, // Ideal entre 40% e 55%
-  targetHourHumidityIdealMax: 55,
+  targetHourHumidityMax: 90, // Umidade relativa < 60%
+  targetHourHumidityIdealMin: 60, // Ideal entre 40% e 55%
+  targetHourHumidityIdealMax: 80,
   targetHourTempMin: 18, // Temperatura entre 18°C e 30°C
   targetHourTempMax: 30,
   targetHourWindMax: 25, // Velocidade do vento abaixo de 25 km/h
@@ -334,7 +334,7 @@ export async function fetchAndAssessRooftopWeather(
       date,
       hour: 7,
       temp: 22,
-      humidity: 52,
+      humidity: 90,
       precip: 0,
       rainProb: 0,
       wind: 12,
@@ -397,7 +397,7 @@ export async function fetchAndAssessRooftopWeather(
         (h >= 9 && h < 10) ||
         item.temp > 28 ||
         item.humidity > config.targetHourHumidityMax ||
-        item.humidity < 70 ||
+        item.humidity < 85 ||
         item.wind >= 18 ||
         item.rainProb > 0
       ) {
@@ -476,11 +476,11 @@ export async function fetchAndAssessRooftopWeather(
     }
 
     // Norma 2: Umidade Madrugada / Orvalho (Peso: 25%)
-    if (priorNightAvgHumidity < 70) {
+    if (priorNightAvgHumidity < 92) {
       score += 25;
     } else if (priorNightAvgHumidity < config.priorNightHumidityMax) {
       score += 20;
-    } else if (priorNightAvgHumidity < 90) {
+    } else if (priorNightAvgHumidity < 97) {
       score += 10;
       reasons.push(`Umidade na madrugada de ${priorNightAvgHumidity}% (Risco de orvalho em telhas)`);
     } else {
